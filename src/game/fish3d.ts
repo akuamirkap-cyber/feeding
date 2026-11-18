@@ -4,6 +4,8 @@ import type { Species } from "./species";
 import {
   applyBoris3DPose,
   baseGroups,
+  blendBotToPalate,
+  bodySpineOutlineMask,
   buildLoftedSurface,
   buildOutlineGeometry,
   clamp,
@@ -17,18 +19,20 @@ import {
   drawBlob,
   drawGlow,
   evalSpineZAt,
+  finRootMaskY,
   hexRgb,
   injectSpineShader,
   interpCurveY,
   isSoftwareWebGL,
+  jawOutlineMask,
   makeLin,
   makePaintedFinTex,
-  makeSolidRoughnessMap,
   mixHex,
-  normalizeExtrudeUVs,
   rgbaHex,
+  smoothstep,
+  surfaceZAt,
 } from "./fish3dShared";
-import type { Fish3DPose, Fish3DRig, LoftOpts, Pt, SharedRigContext } from "./fish3dShared";
+import type { Fish3DPose, Fish3DRig, Pt } from "./fish3dShared";
 import { createReefFish3DRig } from "./fish3dReef";
 import { createPelagicFish3DRig } from "./fish3dPelagic";
 import { createRareFish3DRig } from "./fish3dRare";
@@ -164,6 +168,7 @@ function createAndy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   drawGlow(c, -0.02, -0.06, 0.18, 0.155, -0.25, `${br},${bg},${bb}`, 0.65);
   drawGlow(c, 0.27, 0.01, 0.145, 0.155, 0.25, `${Math.round(dr * 0.68)},${Math.round(dg * 0.52)},${Math.round(db * 0.45)}`, 0.52);
+  drawGlow(c, -0.21, -0.32, 0.08, 0.07, -0.4, `${Math.round(dr * 0.72)},${Math.round(dg * 0.48)},${Math.round(db * 0.42)}`, 0.46);
 
   const drawStripe = (pts: [number, number, number, number, number, number, number, number], w: number) => {
     c.beginPath();
@@ -190,7 +195,7 @@ function createAndy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   drawStripe([0.045, 0.176, -0.068, 0.192, -0.152, 0.095, -0.216, -0.105], 0.02);
   drawStripe([-0.068, 0.224, -0.125, 0.214, -0.165, 0.168, -0.196, 0.112], 0.015);
 
-  // Brow ocellus ring
+  // Brow ocellus ring + eye cheek rim
   c.beginPath();
   c.ellipse(0.164, -0.146, 0.016, 0.021, 0.15, 0, Math.PI * 2);
   c.fillStyle = rgbaHex(D, 0.3);
@@ -199,13 +204,29 @@ function createAndy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   c.lineWidth = 0.0052;
   c.stroke();
 
-  // Golden gill crease
+  // Golden gill crease & recessed dark groove
   c.strokeStyle = rgbaHex(mixHex(BEL, "#fff4c8", 0.68), 0.74);
   c.lineWidth = 0.0082;
   c.beginPath();
   c.moveTo(0.158, -0.078);
   c.bezierCurveTo(0.126, -0.002, 0.144, 0.066, 0.198, 0.095);
   c.stroke();
+  c.strokeStyle = rgbaHex(D, 0.48);
+  c.lineWidth = 0.004;
+  c.beginPath();
+  c.moveTo(0.152, -0.078);
+  c.bezierCurveTo(0.12, -0.002, 0.138, 0.066, 0.192, 0.095);
+  c.stroke();
+
+  // Glossy dorsal & beak sheen
+  drawGlow(c, UX - 0.018 + 0.02, -UY - 0.006, 0.022, 0.009, -0.2, "255,240,210", 0.45);
+  c.fillStyle = makeLin(c, -0.08, -0.32, 0.12, 0.26, [
+    [0, "rgba(255,250,220,0.22)"],
+    [0.18, "rgba(255,250,220,0)"],
+    [0.74, "rgba(45,10,5,0)"],
+    [1, "rgba(45,10,5,0.34)"],
+  ]);
+  c.fillRect(-0.32, -0.38, 0.78, 0.74);
   c.restore();
 
   const albedo = track(new THREE.CanvasTexture(cv));
@@ -243,6 +264,8 @@ function createAndy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       fc.beginPath();
       fc.moveTo(-0.246, 0.01);
       fc.bezierCurveTo(-0.232, 0.115, -0.188, 0.195, -0.258, 0.344);
+      fc.bezierCurveTo(-0.22, 0.346, -0.155, 0.335, -0.125, 0.328);
+      fc.bezierCurveTo(-0.085, 0.345, -0.02, 0.32, 0.045, 0.244);
       fc.stroke();
     })
   );
@@ -358,101 +381,108 @@ function createAndy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
+  const evalUpperPalate = (x: number) => HY + 0.005 + (clamp((x - HX) / (UX - HX), 0, 1)) * 0.004;
+  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, HX, 0.032, 0.014);
+  const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
+
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: -0.248,
-      xEnd: HX + 0.002,
-      uSteps: 42,
+      xEnd: UX,
+      uSteps: 54,
       vSteps: 30,
       evalTopY: evalTop,
-      evalBotY: evalBot,
+      evalBotY: evalUnifiedBot,
       evalHalfZ,
       mapUV: mapWorldUV,
+      roundFront: true,
       rearBulge: 0.005,
     })
   );
   const bodyMat = makeFishMat(albedo);
   injectSpineShader(bodyMat, uniforms);
   bodyGroup.add(new THREE.Mesh(bodyGeo, bodyMat));
-  bodyGroup.add(new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0048)), makeOutlineMat()));
+  const andyBodyMask = bodySpineOutlineMask(
+    evalMidY,
+    [
+      { x0: -0.246, x1: 0.045, top: true },
+      { x0: -0.23, x1: -0.045, top: false },
+    ],
+    0.026
+  );
+  bodyGroup.add(new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0044, andyBodyMask)), makeOutlineMat()));
 
   const peakMat = makeFishMat(peakTex, { emissiveIntensity: 0.28 });
   injectSpineShader(peakMat, uniforms);
-  bodyGroup.add(new THREE.Mesh(dorsalPeakGeo, peakMat));
+  const peakMesh = new THREE.Mesh(dorsalPeakGeo, peakMat);
+  peakMesh.add(
+    new THREE.Mesh(track(buildOutlineGeometry(dorsalPeakGeo, 0.0014, finRootMaskY(0.22, 0.045, true))), makeOutlineMat())
+  );
+  bodyGroup.add(peakMesh);
 
   const crestMat = makeFishMat(crestTex, { emissiveIntensity: 0.25 });
   injectSpineShader(crestMat, uniforms);
-  bodyGroup.add(new THREE.Mesh(crestGeo, crestMat));
+  const crestMesh = new THREE.Mesh(crestGeo, crestMat);
+  crestMesh.add(
+    new THREE.Mesh(track(buildOutlineGeometry(crestGeo, 0.0012, finRootMaskY(0.244, 0.036, true))), makeOutlineMat())
+  );
+  bodyGroup.add(crestMesh);
 
   const analMat = makeFishMat(analTex, { emissiveIntensity: 0.3, transparent: true, opacity: 0.94 });
   injectSpineShader(analMat, uniforms);
-  bodyGroup.add(new THREE.Mesh(analGeo, analMat));
+  const analMesh = new THREE.Mesh(analGeo, analMat);
+  analMesh.add(
+    new THREE.Mesh(track(buildOutlineGeometry(analGeo, 0.0012, finRootMaskY(-0.18, 0.045, false))), makeOutlineMat())
+  );
+  bodyGroup.add(analMesh);
 
   const tailPivot = new THREE.Group();
   tailPivot.position.set(-0.245, 0, 0);
   bodyGroup.add(tailPivot);
-  tailPivot.add(
-    new THREE.Mesh(
-      tailGeo,
-      makeFishMat(tailTex, { emissiveIntensity: 0.34, transparent: true, opacity: 0.96 })
-    )
+  const tailMesh = new THREE.Mesh(
+    tailGeo,
+    makeFishMat(tailTex, { emissiveIntensity: 0.34, transparent: true, opacity: 0.96 })
   );
+  tailMesh.add(new THREE.Mesh(track(buildOutlineGeometry(tailGeo, 0.0012)), makeOutlineMat(0, 0, false)));
+  tailPivot.add(tailMesh);
 
-  // Jaws
+  // Unified cranium owns upper beak; keep upperJawGroup for shared interface compatibility
   const upperJawGroup = new THREE.Group();
   upperJawGroup.position.set(HX, HY, 0);
   bodyGroup.add(upperJawGroup);
-  const upperJawGeo = track(
-    buildLoftedSurface({
-      xStart: HX - 0.016,
-      xEnd: UX,
-      uSteps: 16,
-      vSteps: 22,
-      evalTopY: evalTop,
-      evalBotY: (x) => HY + 0.005 + ((x - HX) / (UX - HX)) * 0.004,
-      evalHalfZ,
-      mapUV: mapWorldUV,
-      localOffsetX: HX,
-      localOffsetY: HY,
-      roundFront: true,
-      rearInsetAt: (x) => (x < HX ? 0.82 + 0.14 * clamp((x - (HX - 0.016)) / 0.016, 0, 1) : 1),
-    })
-  );
-  const uMat = makeFishMat(albedo);
-  injectSpineShader(uMat, uniforms, HX, HY);
-  upperJawGroup.add(new THREE.Mesh(upperJawGeo, uMat));
-  upperJawGroup.add(new THREE.Mesh(track(buildOutlineGeometry(upperJawGeo, 0.0045)), makeOutlineMat(HX, HY)));
 
   const lowerJawGroup = new THREE.Group();
   lowerJawGroup.position.set(HX, HY, 0);
   bodyGroup.add(lowerJawGroup);
   const lowerJawGeo = track(
     buildLoftedSurface({
-      xStart: HX - 0.016,
+      xStart: HX - 0.022,
       xEnd: LX,
-      uSteps: 16,
+      uSteps: 18,
       vSteps: 22,
-      evalTopY: (x) => HY - 0.004 - ((x - HX) / (LX - HX)) * 0.003,
+      evalTopY: (x) => HY - 0.004 - clamp((x - HX) / (LX - HX), 0, 1) * 0.003,
       evalBotY: evalBot,
       evalHalfZ,
       mapUV: mapWorldUV,
       localOffsetX: HX,
       localOffsetY: HY,
       roundFront: true,
-      rearInsetAt: (x) => (x < HX ? 0.82 + 0.14 * clamp((x - (HX - 0.016)) / 0.016, 0, 1) : 1),
+      rearInsetAt: (x) => (x < HX ? 0.78 + 0.2 * clamp((x - (HX - 0.022)) / 0.022, 0, 1) : 1),
     })
   );
   const lMat = makeFishMat(albedo);
   injectSpineShader(lMat, uniforms, HX, HY);
   lowerJawGroup.add(new THREE.Mesh(lowerJawGeo, lMat));
-  lowerJawGroup.add(new THREE.Mesh(track(buildOutlineGeometry(lowerJawGeo, 0.0045)), makeOutlineMat(HX, HY)));
+  lowerJawGroup.add(
+    new THREE.Mesh(track(buildOutlineGeometry(lowerJawGeo, 0.0045, jawOutlineMask(0.008, 0.044))), makeOutlineMat(HX, HY))
+  );
 
   const { mouthInterior, tongueMesh } = createOralParts(ctx, bodyGroup, lowerJawGroup, HX, HY, "#5c0f1d", "#e65b78");
 
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
     ex: 0.204,
     ey: 0.068,
-    ez: evalHalfZ(0.204) * 0.96,
+    ez: surfaceZAt(evalTop, evalBot, evalHalfZ, 0.204, 0.068),
     er: 0.048,
     sx: 0.86,
     sy: 1.02,
@@ -496,11 +526,9 @@ function createAndy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     biteRingMat,
     uniforms,
     onCustomPose: (p, open) => {
-      // drawAndy always keeps a slight expressive open beak at rest (0.18 + open*0.82)
       const tightClamp = p.jaw < 0 ? clamp(-p.jaw, 0, 0.4) : 0;
       const eff = 0.14 + open * 0.86;
-      upperJawGroup.rotation.z = eff * 0.28 - tightClamp * 0.12;
-      lowerJawGroup.rotation.z = -eff * 0.62 + tightClamp * 0.18;
+      lowerJawGroup.rotation.z = -eff * 0.68 + tightClamp * 0.18;
       mouthInterior.visible = true;
       mouthInterior.scale.set(0.85 + eff * 0.2, 0.38 + eff * 0.85, 0.72 + eff * 0.18);
       tongueMesh.visible = true;
@@ -678,6 +706,16 @@ function createClown3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     c.quadraticCurveTo(-0.225, 0.01, -0.24, -0.18);
   });
 
+  // 3D top specular highlight & subtle lower belly shadow
+  c.fillStyle = makeLin(c, 0, -0.24, 0, 0.22, [
+    [0, "rgba(255,255,255,0.22)"],
+    [0.22, "rgba(255,255,255,0)"],
+    [0.68, "rgba(70,20,0,0)"],
+    [1, "rgba(70,20,0,0.3)"],
+  ]);
+  c.fillRect(-0.35, -0.35, 0.9, 0.7);
+  drawGlow(c, 0.08, -0.13, 0.22, 0.045, -0.08, "255,255,255", 0.44);
+
   // Cute smile dimple
   c.strokeStyle = rgbaHex(OL, 0.85);
   c.lineWidth = 0.0075;
@@ -834,87 +872,87 @@ function createClown3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   scaleGroup.position.set(0.0084, -0.0168, 0);
   bodyGroup.add(scaleGroup);
 
+  const evalUpperPalate = (x: number) => HY - 0.005 + clamp((x - HX) / (UX - HX), 0, 1) * 0.015;
+  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, HX, 0.032, 0.014);
+  const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
+
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: -0.215,
-      xEnd: HX + 0.002,
-      uSteps: 40,
+      xEnd: UX,
+      uSteps: 52,
       vSteps: 30,
       evalTopY: evalTop,
-      evalBotY: evalBot,
+      evalBotY: evalUnifiedBot,
       evalHalfZ,
       mapUV: mapWorldUV,
+      roundFront: true,
       rearBulge: 0.006,
     })
   );
   const bodyMat = makeFishMat(albedo);
   injectSpineShader(bodyMat, uniforms);
   scaleGroup.add(new THREE.Mesh(bodyGeo, bodyMat));
-  scaleGroup.add(new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0052)), makeOutlineMat()));
+  const clownBodyMask = bodySpineOutlineMask(
+    evalMidY,
+    [
+      { x0: -0.055, x1: 0.225, top: true },
+      { x0: -0.195, x1: -0.055, top: true },
+      { x0: -0.175, x1: -0.025, top: false },
+    ],
+    0.028
+  );
+  scaleGroup.add(new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0044, clownBodyMask)), makeOutlineMat()));
 
-  for (const [g, t] of [
-    [d1Geo, d1Tex],
-    [d2Geo, d2Tex],
-    [anGeo, anTex],
-  ] as [THREE.BufferGeometry, THREE.Texture][]) {
+  for (const [g, t, finMask] of [
+    [d1Geo, d1Tex, finRootMaskY(0.165, 0.038, true)],
+    [d2Geo, d2Tex, finRootMaskY(0.095, 0.032, true)],
+    [anGeo, anTex, finRootMaskY(-0.115, 0.035, false)],
+  ] as [THREE.BufferGeometry, THREE.Texture, (x: number, y: number, z: number) => number][]) {
     const fm = makeFishMat(t, { emissiveIntensity: 0.28 });
     injectSpineShader(fm, uniforms);
-    scaleGroup.add(new THREE.Mesh(g, fm));
+    const fMesh = new THREE.Mesh(g, fm);
+    fMesh.add(new THREE.Mesh(track(buildOutlineGeometry(g, 0.0014, finMask)), makeOutlineMat()));
+    scaleGroup.add(fMesh);
   }
 
   const tailPivot = new THREE.Group();
   tailPivot.position.set(-0.215, -0.015, 0);
   scaleGroup.add(tailPivot);
-  tailPivot.add(new THREE.Mesh(tailGeo, makeFishMat(tailTex, { emissiveIntensity: 0.3 })));
+  const clownTailMesh = new THREE.Mesh(tailGeo, makeFishMat(tailTex, { emissiveIntensity: 0.3 }));
+  clownTailMesh.add(new THREE.Mesh(track(buildOutlineGeometry(tailGeo, 0.0014)), makeOutlineMat(0, 0, false)));
+  tailPivot.add(clownTailMesh);
 
-  // Upper & lower rounded snout jaws
+  // Unified cranium owns upper snout; empty upperJawGroup kept for compatibility
   const upperJawGroup = new THREE.Group();
   upperJawGroup.position.set(HX, HY, 0);
   scaleGroup.add(upperJawGroup);
-  const upperGeo = track(
-    buildLoftedSurface({
-      xStart: HX - 0.016,
-      xEnd: UX,
-      uSteps: 16,
-      vSteps: 22,
-      evalTopY: evalTop,
-      evalBotY: (x) => HY - 0.005 + ((x - HX) / (UX - HX)) * 0.015,
-      evalHalfZ,
-      mapUV: mapWorldUV,
-      localOffsetX: HX,
-      localOffsetY: HY,
-      roundFront: true,
-      rearInsetAt: (x) => (x < HX ? 0.8 + 0.16 * clamp((x - (HX - 0.016)) / 0.016, 0, 1) : 1),
-    })
-  );
-  const uMat = makeFishMat(albedo);
-  injectSpineShader(uMat, uniforms, HX, HY);
-  upperJawGroup.add(new THREE.Mesh(upperGeo, uMat));
-  upperJawGroup.add(new THREE.Mesh(track(buildOutlineGeometry(upperGeo, 0.005)), makeOutlineMat(HX, HY)));
 
   const lowerJawGroup = new THREE.Group();
   lowerJawGroup.position.set(HX, HY, 0);
   scaleGroup.add(lowerJawGroup);
   const lowerGeo = track(
     buildLoftedSurface({
-      xStart: HX - 0.016,
+      xStart: HX - 0.022,
       xEnd: LX,
-      uSteps: 16,
+      uSteps: 18,
       vSteps: 22,
-      evalTopY: (x) => HY - 0.006 - ((x - HX) / (LX - HX)) * 0.018,
+      evalTopY: (x) => HY - 0.006 - clamp((x - HX) / (LX - HX), 0, 1) * 0.018,
       evalBotY: evalBot,
       evalHalfZ,
       mapUV: mapWorldUV,
       localOffsetX: HX,
       localOffsetY: HY,
       roundFront: true,
-      rearInsetAt: (x) => (x < HX ? 0.8 + 0.16 * clamp((x - (HX - 0.016)) / 0.016, 0, 1) : 1),
+      rearInsetAt: (x) => (x < HX ? 0.78 + 0.2 * clamp((x - (HX - 0.022)) / 0.022, 0, 1) : 1),
     })
   );
   const lMat = makeFishMat(albedo);
   injectSpineShader(lMat, uniforms, HX, HY);
   lowerJawGroup.add(new THREE.Mesh(lowerGeo, lMat));
-  lowerJawGroup.add(new THREE.Mesh(track(buildOutlineGeometry(lowerGeo, 0.005)), makeOutlineMat(HX, HY)));
+  lowerJawGroup.add(
+    new THREE.Mesh(track(buildOutlineGeometry(lowerGeo, 0.0046, jawOutlineMask(0.008, 0.042))), makeOutlineMat(HX, HY))
+  );
 
   const { mouthInterior, tongueMesh } = createOralParts(
     ctx,
@@ -932,7 +970,7 @@ function createClown3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, scaleGroup, {
     ex: 0.312,
     ey: 0.052,
-    ez: evalHalfZ(0.312) * 0.96,
+    ez: surfaceZAt(evalTop, evalBot, evalHalfZ, 0.312, 0.052),
     er: 0.068,
     sx: 0.94,
     sy: 1.0,
@@ -1184,7 +1222,17 @@ function createLayla3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
         }
         fc.strokeStyle = OL;
         fc.lineWidth = 0.008;
-        fc.strokeRect(bounds.minX - 0.02, bounds.minY - 0.02, bounds.maxX - bounds.minX + 0.04, bounds.maxY - bounds.minY + 0.04);
+        fc.beginPath();
+        if (up) {
+          fc.moveTo(X(0.14), Y3(-0.9));
+          fc.quadraticCurveTo(X(0.22), Y3(-1.42), X(0.06), Y3(-1.74));
+          fc.bezierCurveTo(X(-0.22), Y3(-1.44), X(-0.64), Y3(-1.12), X(-0.76), Y3(-0.7));
+        } else {
+          fc.moveTo(X(0.02), Y3(0.88));
+          fc.quadraticCurveTo(X(0.04), Y3(1.38), X(-0.14), Y3(1.68));
+          fc.bezierCurveTo(X(-0.34), Y3(1.32), X(-0.66), Y3(1.04), X(-0.74), Y3(0.62));
+        }
+        fc.stroke();
       })
     );
 
@@ -1232,67 +1280,69 @@ function createLayla3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   );
 
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
+  const evalUnifiedBot = blendBotToPalate(evalBot, () => HY - 0.002, HX, 0.032, 0.014);
+  const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
+
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: X(-0.96),
-      xEnd: HX + 0.002,
-      uSteps: 40,
+      xEnd: UX,
+      uSteps: 52,
       vSteps: 28,
       evalTopY: evalTop,
-      evalBotY: evalBot,
+      evalBotY: evalUnifiedBot,
       evalHalfZ,
       mapUV: mapWorldUV,
+      roundFront: true,
     })
   );
   const bodyMat = makeFishMat(albedo);
   injectSpineShader(bodyMat, uniforms);
   bodyGroup.add(new THREE.Mesh(bodyGeo, bodyMat));
-  bodyGroup.add(new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0046)), makeOutlineMat()));
+  const laylaBodyMask = bodySpineOutlineMask(
+    evalMidY,
+    [
+      { x0: X(-0.76), x1: X(0.14), top: true },
+      { x0: X(-0.74), x1: X(0.02), top: false },
+    ],
+    0.026
+  );
+  bodyGroup.add(new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0046, laylaBodyMask)), makeOutlineMat()));
 
   const dorsalMat = makeFishMat(dorsalTex, { emissiveIntensity: 0.3 });
   injectSpineShader(dorsalMat, uniforms);
-  bodyGroup.add(new THREE.Mesh(dorsalGeo, dorsalMat));
+  const dorsalMesh = new THREE.Mesh(dorsalGeo, dorsalMat);
+  dorsalMesh.add(
+    new THREE.Mesh(track(buildOutlineGeometry(dorsalGeo, 0.0014, finRootMaskY(Y3(-0.75), 0.04, true))), makeOutlineMat())
+  );
+  bodyGroup.add(dorsalMesh);
+
   const analMat = makeFishMat(analTex, { emissiveIntensity: 0.3 });
   injectSpineShader(analMat, uniforms);
-  bodyGroup.add(new THREE.Mesh(analGeo, analMat));
+  const analMesh = new THREE.Mesh(analGeo, analMat);
+  analMesh.add(
+    new THREE.Mesh(track(buildOutlineGeometry(analGeo, 0.0014, finRootMaskY(Y3(0.75), 0.04, false))), makeOutlineMat())
+  );
+  bodyGroup.add(analMesh);
 
   const tailPivot = new THREE.Group();
   tailPivot.position.set(X(-0.9), -0.0365, 0);
   bodyGroup.add(tailPivot);
   tailPivot.add(new THREE.Mesh(tailGeo, makeFishMat(tailTex, { emissiveIntensity: 0.3 })));
 
+  // Unified cranium owns upper snout; empty upperJawGroup kept for compatibility
   const upperJawGroup = new THREE.Group();
   upperJawGroup.position.set(HX, HY, 0);
   bodyGroup.add(upperJawGroup);
-  const uGeo = track(
-    buildLoftedSurface({
-      xStart: HX - 0.015,
-      xEnd: UX,
-      uSteps: 14,
-      vSteps: 20,
-      evalTopY: evalTop,
-      evalBotY: () => HY - 0.002,
-      evalHalfZ,
-      mapUV: mapWorldUV,
-      localOffsetX: HX,
-      localOffsetY: HY,
-      roundFront: true,
-      rearInsetAt: (x) => (x < HX ? 0.82 + 0.14 * clamp((x - (HX - 0.015)) / 0.015, 0, 1) : 1),
-    })
-  );
-  const uMat = makeFishMat(albedo);
-  injectSpineShader(uMat, uniforms, HX, HY);
-  upperJawGroup.add(new THREE.Mesh(uGeo, uMat));
-  upperJawGroup.add(new THREE.Mesh(track(buildOutlineGeometry(uGeo, 0.0044)), makeOutlineMat(HX, HY)));
 
   const lowerJawGroup = new THREE.Group();
   lowerJawGroup.position.set(HX, HY, 0);
   bodyGroup.add(lowerJawGroup);
   const lGeo = track(
     buildLoftedSurface({
-      xStart: HX - 0.015,
+      xStart: HX - 0.022,
       xEnd: LX,
-      uSteps: 14,
+      uSteps: 16,
       vSteps: 20,
       evalTopY: () => HY - 0.004,
       evalBotY: evalBot,
@@ -1301,20 +1351,22 @@ function createLayla3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       localOffsetX: HX,
       localOffsetY: HY,
       roundFront: true,
-      rearInsetAt: (x) => (x < HX ? 0.82 + 0.14 * clamp((x - (HX - 0.015)) / 0.015, 0, 1) : 1),
+      rearInsetAt: (x) => (x < HX ? 0.78 + 0.2 * clamp((x - (HX - 0.022)) / 0.022, 0, 1) : 1),
     })
   );
   const lMat = makeFishMat(albedo);
   injectSpineShader(lMat, uniforms, HX, HY);
   lowerJawGroup.add(new THREE.Mesh(lGeo, lMat));
-  lowerJawGroup.add(new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0044)), makeOutlineMat(HX, HY)));
+  lowerJawGroup.add(
+    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0044, jawOutlineMask(0.008, 0.042))), makeOutlineMat(HX, HY))
+  );
 
   const { mouthInterior, tongueMesh } = createOralParts(ctx, bodyGroup, lowerJawGroup, HX, HY, "#5c1220", "#eb6b8e", [0.03, 0.025, 0.02], [0.024, 0.01, 0.014], 0.028);
 
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
     ex: X(0.54),
     ey: Y3(-0.34),
-    ez: evalHalfZ(X(0.54)) * 0.96,
+    ez: surfaceZAt(evalTop, evalBot, evalHalfZ, X(0.54), Y3(-0.34)),
     er: 0.044,
     sx: 0.74,
     sy: 1.05,
@@ -1399,7 +1451,7 @@ function buildCurvedTuskGeo(len: number, bow: number, rad: number): THREE.Buffer
       const b = (i + 1) * rc + j;
       const c = (i + 1) * rc + j + 1;
       const d = i * rc + j + 1;
-      idx.push(a, b, d, b, c, d);
+      idx.push(a, d, b, b, d, c);
     }
   }
   const geo = new THREE.BufferGeometry();
@@ -1498,56 +1550,42 @@ function createEddy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
-  // Rear Torso (-0.278 .. HX=0.118)
+  // Unified Rear Torso + Cranium (-0.278 .. 0.338)
+  const evalTop = (x: number) => interpCurveY(topPts, x);
+  const evalBot = blendBotToPalate((x) => interpCurveY(torsoBotPts, x), mouthSeam, HX, 0.032, 0.014);
+  const evalMidY = (x: number) => (evalTop(x) + evalBot(x)) * 0.5;
+
   const torsoGeo = track(
     buildLoftedSurface({
       xStart: -0.278,
-      xEnd: HX + 0.012,
-      uSteps: 34,
-      vSteps: 28,
-      evalTopY: (x) => interpCurveY(topPts, x),
-      evalBotY: (x) => interpCurveY(torsoBotPts, x),
+      xEnd: 0.338,
+      uSteps: 56,
+      vSteps: 30,
+      evalTopY: evalTop,
+      evalBotY: evalBot,
       evalHalfZ,
       mapUV: mapWorldUV,
+      roundFront: true,
     })
   );
   const bMat = makeFishMat(albedo);
   injectSpineShader(bMat, uniforms);
   bodyGroup.add(new THREE.Mesh(torsoGeo, bMat));
-  bodyGroup.add(new THREE.Mesh(track(buildOutlineGeometry(torsoGeo, 0.0048)), makeOutlineMat()));
+  const eddyBodyMask = bodySpineOutlineMask(evalMidY, [{ x0: -0.232, x1: -0.01, top: true }], 0.024);
+  bodyGroup.add(new THREE.Mesh(track(buildOutlineGeometry(torsoGeo, 0.0046, eddyBodyMask)), makeOutlineMat()));
 
-  // Upper Cranium / Snout (HX-0.018 .. 0.338)
+  // Unified cranium owns upper snout; empty upperJawGroup kept for shared interface
   const upperJawGroup = new THREE.Group();
   upperJawGroup.position.set(HX, HY, 0);
   bodyGroup.add(upperJawGroup);
-  const uGeo = track(
-    buildLoftedSurface({
-      xStart: HX - 0.018,
-      xEnd: 0.338,
-      uSteps: 22,
-      vSteps: 24,
-      evalTopY: (x) => interpCurveY(topPts, x),
-      evalBotY: mouthSeam,
-      evalHalfZ,
-      mapUV: mapWorldUV,
-      localOffsetX: HX,
-      localOffsetY: HY,
-      roundFront: true,
-      rearInsetAt: (x) => (x < HX ? 0.88 + 0.12 * clamp((x - (HX - 0.018)) / 0.018, 0, 1) : 1),
-    })
-  );
-  const uMat = makeFishMat(albedo);
-  injectSpineShader(uMat, uniforms, HX, HY);
-  upperJawGroup.add(new THREE.Mesh(uGeo, uMat));
-  upperJawGroup.add(new THREE.Mesh(track(buildOutlineGeometry(uGeo, 0.0046)), makeOutlineMat(HX, HY)));
 
-  // Dramatic Scoop Lower Jaw (HX-0.018 .. 0.354)
+  // Dramatic Scoop Lower Jaw (HX-0.022 .. 0.354)
   const lowerJawGroup = new THREE.Group();
   lowerJawGroup.position.set(HX, HY, 0);
   bodyGroup.add(lowerJawGroup);
   const lGeo = track(
     buildLoftedSurface({
-      xStart: HX - 0.02,
+      xStart: HX - 0.022,
       xEnd: 0.354,
       uSteps: 24,
       vSteps: 24,
@@ -1558,13 +1596,15 @@ function createEddy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       localOffsetX: HX,
       localOffsetY: HY,
       roundFront: true,
-      rearInsetAt: (x) => (x < HX ? 0.84 + 0.14 * clamp((x - (HX - 0.02)) / 0.02, 0, 1) : 1),
+      rearInsetAt: (x) => (x < HX ? 0.78 + 0.2 * clamp((x - (HX - 0.022)) / 0.022, 0, 1) : 1),
     })
   );
   const lMat = makeFishMat(albedo);
   injectSpineShader(lMat, uniforms, HX, HY);
   lowerJawGroup.add(new THREE.Mesh(lGeo, lMat));
-  lowerJawGroup.add(new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0046)), makeOutlineMat(HX, HY)));
+  lowerJawGroup.add(
+    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0045, jawOutlineMask(0.008, 0.046))), makeOutlineMat(HX, HY))
+  );
 
   // Abyssal mouth cavern + fleshy terracotta-coral tongue
   const { mouthInterior, tongueMesh } = createOralParts(
@@ -1582,24 +1622,24 @@ function createEddy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   tongueMesh.rotation.z = 0.42;
   tongueMesh.position.set(0.095, 0.045, 0);
 
-  // Curved Ivory Tusks (5 pairs lower + 5 pairs upper needle tusks extending cleanly on mangap!)
+  // Curved Bright White Tusks (~24% wider & crisp white with subtle outline!)
   const ivoryMat = track(
     new THREE.MeshPhysicalMaterial({
-      color: "#fffbe8",
-      emissive: "#ebe2b8",
-      emissiveIntensity: 0.25,
-      roughness: 0.18,
-      clearcoat: 0.75,
+      color: "#ffffff",
+      emissive: "#f4f9ff",
+      emissiveIntensity: 0.42,
+      roughness: 0.14,
+      clearcoat: 0.85,
     })
   );
   const tuskOlMat = track(new THREE.MeshBasicMaterial({ color: OL, side: THREE.BackSide }));
   const addTusk = (parent: THREE.Object3D, bx: number, by: number, bz: number, len: number, bow: number, rad: number, tiltZ: number, down = false) => {
-    const tGeo = track(buildCurvedTuskGeo(len, bow, rad));
+    const tGeo = track(buildCurvedTuskGeo(len, bow, rad * 1.24));
     const mesh = new THREE.Mesh(tGeo, ivoryMat);
     mesh.position.set(bx, by, bz);
     mesh.rotation.z = tiltZ;
     if (down) mesh.scale.y = -1;
-    const ol = new THREE.Mesh(track(buildOutlineGeometry(tGeo, 0.0022)), tuskOlMat);
+    const ol = new THREE.Mesh(track(buildOutlineGeometry(tGeo, 0.0009)), tuskOlMat);
     mesh.add(ol);
     parent.add(mesh);
   };
@@ -1619,9 +1659,9 @@ function createEddy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     }
   }
 
-  // Upper needle tusks (mounted on upperJawGroup, animate visibility & length smoothly on mangap!)
+  // Upper needle tusks mounted directly along unified upper palate on bodyGroup
   const upperTusksGroup = new THREE.Group();
-  upperJawGroup.add(upperTusksGroup);
+  bodyGroup.add(upperTusksGroup);
   const upperFangs: [number, number, number, number][] = [
     [0.326, -0.006, 0.095, 0.0095],
     [0.294, -0.018, 0.105, 0.011],
@@ -1632,7 +1672,7 @@ function createEddy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   for (const [fx, fy, flen, frad] of upperFangs) {
     const zEdge = evalHalfZ(fx) * 0.72;
     for (const side of [1, -1]) {
-      addTusk(upperTusksGroup, fx - HX, fy - HY, side * zEdge, flen, flen * 0.22, frad, 0.14, true);
+      addTusk(upperTusksGroup, fx, fy, side * zEdge, flen, flen * 0.22, frad, 0.14, true);
     }
   }
 
@@ -1846,7 +1886,7 @@ function createEddy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
     ex: 0.148,
     ey: 0.068,
-    ez: evalHalfZ(0.148) * 0.94,
+    ez: surfaceZAt(evalTop, evalBot, evalHalfZ, 0.148, 0.068, 0.22, 0.94),
     er: 0.068,
     sx: 0.96,
     sy: 1.0,
@@ -1883,9 +1923,7 @@ function createEddy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     biteRingMat,
     uniforms,
     onCustomPose: (p, open) => {
-      // Dramatic 48° jaw gape + upper tusk extension + esca lure pulse!
       const tightClamp = p.jaw < 0 ? clamp(-p.jaw, 0, 0.4) : 0;
-      upperJawGroup.rotation.z = open * 0.18 - tightClamp * 0.08;
       lowerJawGroup.rotation.z = -open * 0.84 + tightClamp * 0.14;
       const uTooth = clamp((open - 0.03) / 0.28, 0, 1);
       upperTusksGroup.visible = uTooth > 0.04;
@@ -2041,57 +2079,42 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
-  // Main body [-0.36 .. HX] + upper snout [HX-0.016 .. UX]
+  // Unified body [-0.36 .. UX]
+  const evalUnifiedBot = blendBotToPalate(evalBot, () => HY - 0.002, HX, 0.032, 0.014);
+  const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
+
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: -0.36,
-      xEnd: HX + 0.004,
-      uSteps: 40,
-      vSteps: 28,
+      xEnd: UX,
+      uSteps: 56,
+      vSteps: 30,
       evalTopY: evalTop,
-      evalBotY: evalBot,
+      evalBotY: evalUnifiedBot,
       evalHalfZ,
       mapUV: mapWorldUV,
+      roundFront: true,
       taper: (s) => 1 - 0.14 * s * s,
     })
   );
   const bMat = makeFishMat(albedo, { emissiveIntensity: 0.28, clearcoat: 0.55 });
   injectSpineShader(bMat, uniforms);
   bodyGroup.add(new THREE.Mesh(bodyGeo, bMat));
-  bodyGroup.add(new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0042)), makeOutlineMat()));
+  const orcaBodyMask = bodySpineOutlineMask(evalMidY, [{ x0: -0.078, x1: 0.072, top: true }], 0.028);
+  bodyGroup.add(new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0042, orcaBodyMask)), makeOutlineMat()));
 
   const upperJawGroup = new THREE.Group();
   upperJawGroup.position.set(HX, HY, 0);
   bodyGroup.add(upperJawGroup);
-  const uGeo = track(
-    buildLoftedSurface({
-      xStart: HX - 0.016,
-      xEnd: UX,
-      uSteps: 16,
-      vSteps: 22,
-      evalTopY: evalTop,
-      evalBotY: () => HY - 0.002,
-      evalHalfZ,
-      mapUV: mapWorldUV,
-      localOffsetX: HX,
-      localOffsetY: HY,
-      roundFront: true,
-      rearInsetAt: (x) => (x < HX ? 0.84 + 0.14 * clamp((x - (HX - 0.016)) / 0.016, 0, 1) : 1),
-    })
-  );
-  const uMat = makeFishMat(albedo, { emissiveIntensity: 0.28, clearcoat: 0.55 });
-  injectSpineShader(uMat, uniforms, HX, HY);
-  upperJawGroup.add(new THREE.Mesh(uGeo, uMat));
-  upperJawGroup.add(new THREE.Mesh(track(buildOutlineGeometry(uGeo, 0.004)), makeOutlineMat(HX, HY)));
 
   const lowerJawGroup = new THREE.Group();
   lowerJawGroup.position.set(HX, HY, 0);
   bodyGroup.add(lowerJawGroup);
   const lGeo = track(
     buildLoftedSurface({
-      xStart: HX - 0.016,
+      xStart: HX - 0.022,
       xEnd: LX,
-      uSteps: 16,
+      uSteps: 18,
       vSteps: 22,
       evalTopY: () => HY - 0.003,
       evalBotY: evalBot,
@@ -2100,13 +2123,15 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       localOffsetX: HX,
       localOffsetY: HY,
       roundFront: true,
-      rearInsetAt: (x) => (x < HX ? 0.82 + 0.14 * clamp((x - (HX - 0.016)) / 0.016, 0, 1) : 1),
+      rearInsetAt: (x) => (x < HX ? 0.78 + 0.2 * clamp((x - (HX - 0.022)) / 0.022, 0, 1) : 1),
     })
   );
   const lMat = makeFishMat(albedo, { emissiveIntensity: 0.3, clearcoat: 0.55 });
   injectSpineShader(lMat, uniforms, HX, HY);
   lowerJawGroup.add(new THREE.Mesh(lGeo, lMat));
-  lowerJawGroup.add(new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.004)), makeOutlineMat(HX, HY)));
+  lowerJawGroup.add(
+    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.004, jawOutlineMask(0.008, 0.044))), makeOutlineMat(HX, HY))
+  );
 
   // Rose-pink gums, pink tongue & 3D white peg teeth!
   const { mouthInterior, tongueMesh } = createOralParts(
@@ -2131,7 +2156,7 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   );
   const pegGeo = track(new THREE.ConeGeometry(0.0042, 0.012, 8));
   const upperTeeth = new THREE.Group();
-  upperJawGroup.add(upperTeeth);
+  bodyGroup.add(upperTeeth);
   const lowerTeeth = new THREE.Group();
   lowerJawGroup.add(lowerTeeth);
   for (let i = 1; i <= 7; i++) {
@@ -2140,7 +2165,7 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     const zPos = evalHalfZ(HX + x) * 0.68;
     for (const side of [1, -1]) {
       const ut = new THREE.Mesh(pegGeo, pegMat);
-      ut.position.set(x, -0.002, side * zPos);
+      ut.position.set(HX + x, HY - 0.002, side * zPos);
       ut.rotation.x = Math.PI;
       upperTeeth.add(ut);
 
@@ -2150,12 +2175,12 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     }
   }
 
-  // Tall swept falcate dorsal fin
+  // Tall swept falcate dorsal fin (base embedded deeper inside back so no horizon gap)
   const dorsalShape = new THREE.Shape();
-  dorsalShape.moveTo(0.072, 0.075);
+  dorsalShape.moveTo(0.072, 0.042);
   dorsalShape.bezierCurveTo(0.032, 0.125, -0.015, 0.195, -0.065, 0.232);
   dorsalShape.quadraticCurveTo(-0.084, 0.238, -0.078, 0.216);
-  dorsalShape.bezierCurveTo(-0.038, 0.165, -0.038, 0.108, -0.062, 0.072);
+  dorsalShape.bezierCurveTo(-0.038, 0.165, -0.038, 0.108, -0.062, 0.042);
   dorsalShape.closePath();
   const { geo: dorsalGeo } = createExtrudedFin(dorsalShape, 0.008, 0.002, 16);
   track(dorsalGeo);
@@ -2170,7 +2195,9 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   );
   injectSpineShader(blackFinMat, uniforms);
   bodyGroup.add(new THREE.Mesh(dorsalGeo, blackFinMat));
-  bodyGroup.add(new THREE.Mesh(track(buildOutlineGeometry(dorsalGeo, 0.0032)), makeOutlineMat()));
+  bodyGroup.add(
+    new THREE.Mesh(track(buildOutlineGeometry(dorsalGeo, 0.0032, finRootMaskY(0.068, 0.034, true))), makeOutlineMat())
+  );
 
   // TRUE HORIZONTAL 3D TAIL FLUKE (in XZ plane, pitched up & down!)
   const flukeShape = new THREE.Shape();
@@ -2226,7 +2253,7 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
     ex: 0.326,
     ey: -0.042,
-    ez: evalHalfZ(0.326) * 0.96,
+    ez: surfaceZAt(evalTop, evalBot, evalHalfZ, 0.326, -0.042),
     er: 0.016,
     irisColor: pal.iris || "#2b6cb0",
     rimColor: "#030508",
@@ -2260,7 +2287,6 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     uniforms,
     onCustomPose: (p, open) => {
       const tightClamp = p.jaw < 0 ? clamp(-p.jaw, 0, 0.4) : 0;
-      upperJawGroup.rotation.z = open * 0.08;
       lowerJawGroup.rotation.z = -open * 0.46 + tightClamp * 0.1;
       upperTeeth.visible = open > 0.05;
       lowerTeeth.visible = open > 0.05;
@@ -2610,7 +2636,7 @@ function createSnapturtle3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     })
   );
   headGroup.add(new THREE.Mesh(skullGeo, makeFishMat(headTex, { emissiveIntensity: isAlbino ? 0.28 : 0.2 })));
-  headGroup.add(new THREE.Mesh(track(buildOutlineGeometry(skullGeo, 0.0042)), olStaticMat));
+  headGroup.add(new THREE.Mesh(track(buildOutlineGeometry(skullGeo, 0.0042, (x) => smoothstep(0.002, 0.036, x))), olStaticMat));
 
   // Hinged Lower Jaw + Worm Tongue
   const lowerJawGroup = new THREE.Group();
@@ -2618,16 +2644,16 @@ function createSnapturtle3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   headGroup.add(lowerJawGroup);
 
   const lBotPts: Pt[] = [
-    [HX - 0.012, -0.064],
+    [HX - 0.02, -0.064],
     [0.325, -0.056],
     [0.362, -0.046],
     [0.376, -0.021],
   ];
   const lowerGeo = track(
     buildLoftedSurface({
-      xStart: HX - 0.012,
+      xStart: HX - 0.02,
       xEnd: 0.376,
-      uSteps: 16,
+      uSteps: 18,
       vSteps: 20,
       evalTopY: () => HY + 0.004,
       evalBotY: (x) => interpCurveY(lBotPts, x),
@@ -2636,10 +2662,13 @@ function createSnapturtle3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       localOffsetX: HX,
       localOffsetY: HY,
       roundFront: true,
+      rearInsetAt: (x) => (x < HX ? 0.78 + 0.2 * clamp((x - (HX - 0.02)) / 0.02, 0, 1) : 1),
     })
   );
   lowerJawGroup.add(new THREE.Mesh(lowerGeo, makeFishMat(headTex, { emissiveIntensity: isAlbino ? 0.28 : 0.2 })));
-  lowerJawGroup.add(new THREE.Mesh(track(buildOutlineGeometry(lowerGeo, 0.0038)), olStaticMat));
+  lowerJawGroup.add(
+    new THREE.Mesh(track(buildOutlineGeometry(lowerGeo, 0.0038, jawOutlineMask(0.008, 0.04))), olStaticMat)
+  );
 
   // Worm Tongue (wriggling coral-pink snapping turtle bait tongue!)
   const { mouthInterior, tongueMesh } = createOralParts(
@@ -2914,6 +2943,7 @@ export function applyFish3DPose(rig: Fish3DRig, p: Fish3DPose) {
   rig.pitchGroup.rotation.x = p.inspectPitch ?? 0;
   rig.bodyGroup.rotation.z = -p.tilt;
   rig.bodyGroup.position.x = p.biteLunge * 0.011;
+  rig.bodyGroup.scale.set(1 - p.sq * 0.24, 1 + p.sq * 0.3, 1);
 
   // 2. Spine S-Wave & Gulp / Squash Uniforms
   const swimAmp = rig.isFluke ? 0.012 + p.swimSpeed * 0.018 : 0.016 + p.swimSpeed * 0.032 + turnAmt * 0.048;

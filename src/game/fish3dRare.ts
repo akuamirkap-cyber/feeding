@@ -2,24 +2,67 @@ import * as THREE from "three";
 import type { Species } from "./species";
 import {
   baseGroups,
+  blendBotToPalate,
+  bodySpineOutlineMask,
   buildLoftedSurface,
   buildOutlineGeometry,
   clamp,
   createBiteRing,
   createEyePair,
+  createExtrudedFin,
   createOralParts,
   createRigContext,
+  createWorldMapper,
   drawBlob,
+  drawFinRays,
   drawGlow,
   injectSpineShader,
   interpCurveY,
+  jawOutlineMask,
   makeLin,
   makePaintedFinTex,
   makeSpineFinMesh,
-  mixHex,
   rgbaHex,
+  sampleBezierChain,
+  smoothstep,
+  surfaceZAt,
 } from "./fish3dShared";
-import type { Fish3DRig, Pt } from "./fish3dShared";
+import type { Fish3DRig } from "./fish3dShared";
+
+function drawStar4Canvas(
+  c: CanvasRenderingContext2D,
+  sx: number,
+  sy: number,
+  r: number,
+  starCol: string,
+  haloCol?: string
+) {
+  c.save();
+  c.translate(sx, sy);
+  if (haloCol) {
+    c.fillStyle = haloCol;
+    c.beginPath();
+    c.arc(0, 0, r * 1.65, 0, Math.PI * 2);
+    c.fill();
+  }
+  c.fillStyle = starCol;
+  c.beginPath();
+  c.moveTo(0, -r);
+  c.lineTo(r * 0.34, -r * 0.34);
+  c.lineTo(r, 0);
+  c.lineTo(r * 0.34, r * 0.34);
+  c.lineTo(0, r);
+  c.lineTo(-r * 0.34, r * 0.34);
+  c.lineTo(-r, 0);
+  c.lineTo(-r * 0.34, -r * 0.34);
+  c.closePath();
+  c.fill();
+  c.fillStyle = "#ffffff";
+  c.beginPath();
+  c.arc(0, 0, r * 0.24, 0, Math.PI * 2);
+  c.fill();
+  c.restore();
+}
 
 // =====================================================================================
 // 1. MANDARIN (Naga Karang Langka — Sapphire Dragonet, Cyan-Outlined Tangerine Swirls)
@@ -27,259 +70,404 @@ import type { Fish3DRig, Pt } from "./fish3dShared";
 function createMandarin3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const pal = sp.pal;
   const OL = pal.outline || "#041033";
-  const B = pal.body;
-  const D = pal.dark;
-  const BEL = pal.belly;
-  const FIN = pal.fin;
-  const TAIL = pal.tail || "#ff4757";
-  const STR = pal.stripe || "#ff7b1c";
-  const SPOT = pal.spot || "#2cf5e8"; // electric cyan highlight outline
+  const SAP = pal.body || "#0e47b8";
+  const DK = pal.dark || "#061d66";
+  const AQUA = pal.belly || "#279cf5";
+  const CRMS = pal.tail || "#ff4757";
+  const ORN = pal.stripe || "#ff7b1c";
+  const CYAN = pal.spot || "#2cf5e8";
 
   const ctx = createRigContext(OL, "#4a4a4a");
   const { track, uniforms, makeOutlineMat } = ctx;
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
-  const xTail = -0.32;
-  const xHead = 0.21;
-  const xSnout = 0.35;
+  const xTail = -0.172;
+  const xHead = 0.232;
+  const hy = -0.026;
+  const xSnout = 0.348;
 
-  const topProf: Pt[] = [
-    [xTail, 0.044],
-    [-0.2, 0.13],
-    [-0.04, 0.185],
-    [0.12, 0.195],
-    [xHead, 0.165],
-    [0.29, 0.1],
-    [xSnout, 0.014],
-  ];
-  const botProf: Pt[] = [
-    [xTail, -0.042],
-    [-0.2, -0.122],
-    [-0.04, -0.175],
-    [0.12, -0.18],
-    [xHead, -0.155],
-    [0.29, -0.09],
-    [xSnout, -0.014],
-  ];
+  const topProf = sampleBezierChain(
+    [
+      [[-0.172, 0.035], [-0.085, 0.095], [0.078, 0.116], [0.202, 0.092]],
+      [[0.202, 0.092], [0.278, 0.076], [0.328, 0.028], [xSnout, -0.015]],
+    ],
+    22
+  );
+  const botProf = sampleBezierChain(
+    [
+      [[-0.172, -0.035], [-0.082, -0.082], [0.055, -0.112], [0.182, -0.09]],
+      [[0.182, -0.09], [0.288, -0.076], [0.32, -0.042], [0.336, -0.032]],
+    ],
+    22
+  );
   const evalZ = (x: number, t: number) => {
-    const base = 0.028 + 0.115 * Math.sin(Math.pow(clamp(t, 0, 1), 0.74) * Math.PI);
-    return x > 0.22 ? base * clamp(1 - (x - 0.22) / 0.16, 0.38, 1) : base;
+    const base = 0.02 + 0.076 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
+    return x > 0.23 ? base * clamp(1 - (x - 0.23) / 0.14, 0.32, 1) : base;
   };
 
-  // Paint Psychedelic Sapphire + Electric-Cyan-Outlined Tangerine Swirls
+  const { mapUV, beginCanvas2D } = createWorldMapper(-0.188, 0.36, -0.125, 0.125, 512);
   const bodyCv = document.createElement("canvas");
   bodyCv.width = 512;
   bodyCv.height = 512;
   const bc = bodyCv.getContext("2d")!;
-  bc.fillStyle = makeLin(bc, 0, 0, 0, 512, [
-    [0, D],
-    [0.4, B],
-    [0.78, BEL],
-    [1, D],
+  beginCanvas2D(bc);
+  bc.fillStyle = makeLin(bc, 0.06, -0.112, 0.06, 0.108, [
+    [0, DK],
+    [0.34, SAP],
+    [0.74, AQUA],
+    [1, "#1870db"],
   ]);
-  bc.fillRect(0, 0, 512, 512);
+  bc.fillRect(-0.3, -0.2, 0.75, 0.45);
+  drawGlow(bc, 0.08, -0.062, 0.21, 0.046, 0, "120,245,255", 0.3);
 
-  // Flowing S-swirls (cyan halo border + tangerine fill)
-  const drawSwirl = (pts: number[][], width: number) => {
-    for (const [col, w] of [[SPOT, width + 12], [STR, width]] as const) {
-      bc.strokeStyle = col;
-      bc.lineWidth = w;
-      bc.lineCap = "round";
-      bc.beginPath();
-      bc.moveTo(pts[0][0], pts[0][1]);
-      bc.bezierCurveTo(pts[1][0], pts[1][1], pts[2][0], pts[2][1], pts[3][0], pts[3][1]);
-      bc.stroke();
-    }
+  const drawSwirl = (pathFn: () => void) => {
+    bc.beginPath();
+    pathFn();
+    bc.closePath();
+    bc.fillStyle = makeLin(bc, -0.12, -0.08, 0.24, 0.08, [
+      [0, "#ffa62b"],
+      [0.52, ORN],
+      [1, CRMS],
+    ]);
+    bc.fill();
+    bc.strokeStyle = CYAN;
+    bc.lineWidth = 0.005;
+    bc.stroke();
+    bc.strokeStyle = rgbaHex("#030e2b", 0.72);
+    bc.lineWidth = 0.0022;
+    bc.stroke();
   };
-  drawSwirl([[85, 195], [145, 95], [205, 315], [275, 210]], 26);
-  drawSwirl([[260, 145], [320, 85], [365, 290], [425, 225]], 24);
-  drawSwirl([[115, 345], [185, 275], [255, 400], [345, 340]], 22);
+  drawSwirl(() => {
+    bc.moveTo(0.112, -0.105);
+    bc.bezierCurveTo(0.148, -0.048, 0.155, 0.015, 0.228, 0.044);
+    bc.bezierCurveTo(0.258, 0.056, 0.232, 0.088, 0.178, 0.076);
+    bc.bezierCurveTo(0.12, 0.062, 0.108, -0.025, 0.068, -0.098);
+  });
+  drawSwirl(() => {
+    bc.moveTo(0.015, -0.104);
+    bc.bezierCurveTo(-0.022, -0.045, 0.038, 0.018, -0.018, 0.078);
+    bc.bezierCurveTo(-0.048, 0.102, -0.088, 0.082, -0.068, 0.046);
+    bc.bezierCurveTo(-0.038, -0.004, -0.072, -0.058, -0.032, -0.098);
+  });
+  drawSwirl(() => {
+    bc.moveTo(-0.105, -0.068);
+    bc.bezierCurveTo(-0.135, -0.025, -0.108, 0.022, -0.145, 0.052);
+    bc.lineTo(-0.175, 0.034);
+    bc.bezierCurveTo(-0.154, 0, -0.165, -0.032, -0.138, -0.058);
+  });
+
+  bc.fillStyle = ORN;
+  drawBlob(bc, 0.278, -0.015, 0.019, 0.011, 0.35);
+  bc.strokeStyle = CYAN;
+  bc.lineWidth = 0.0036;
+  bc.stroke();
+
+  bc.fillStyle = CYAN;
+  drawBlob(bc, 0.188, -0.055, 0.009, 0.0065, -0.2);
+  drawBlob(bc, 0.042, 0.052, 0.01, 0.007, 0.2);
+  drawBlob(bc, -0.088, -0.024, 0.009, 0.0065, 0);
+
+  bc.strokeStyle = rgbaHex(CYAN, 0.85);
+  bc.lineWidth = 0.0038;
+  bc.beginPath();
+  bc.moveTo(0.245, 0.048);
+  bc.quadraticCurveTo(0.272, 0.035, 0.285, 0.056);
+  bc.stroke();
+  bc.restore();
 
   const bodyTex = track(new THREE.CanvasTexture(bodyCv));
   bodyTex.colorSpace = THREE.SRGBColorSpace;
   bodyTex.anisotropy = maxAnisotropy;
 
-  const mapUV = (x: number, y: number): Pt => [
-    clamp((x - xTail) / (xSnout - xTail), 0.01, 0.99),
-    clamp((y + 0.21) / 0.42, 0.01, 0.99),
-  ];
+  const evalTop = (x: number) => interpCurveY(topProf, x);
+  const evalBot = (x: number) => interpCurveY(botProf, x);
+  const evalUpperPalate = (x: number) => (x > 0.31 ? -0.024 : -0.03);
+  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, xHead);
+  const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
+  const mandarinMask = bodySpineOutlineMask(
+    evalMidY,
+    [
+      { x0: -0.182, x1: 0.112, top: true },
+      { x0: -0.188, x1: 0.015, top: false },
+    ],
+    0.024
+  );
 
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: xTail,
-      xEnd: xHead,
-      uSteps: 36,
+      xEnd: xSnout,
+      uSteps: 44,
       vSteps: 26,
-      evalTopY: (x) => interpCurveY(topProf, x),
-      evalBotY: (x) => interpCurveY(botProf, x),
+      evalTopY: evalTop,
+      evalBotY: evalUnifiedBot,
       evalHalfZ: evalZ,
       mapUV,
-      rearBulge: 0.005,
-      capFront: false,
+      rearBulge: 0.004,
+      roundFront: true,
     })
   );
-  const bodyMat = ctx.makeFishMat(bodyTex, { emissiveIntensity: 0.34 });
+  const bodyMat = ctx.makeFishMat(bodyTex, { emissiveIntensity: 0.32 });
   injectSpineShader(bodyMat, uniforms, 0, 0);
   bodyGroup.add(
     new THREE.Mesh(bodyGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0055)), makeOutlineMat(0, 0))
+    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0038, mandarinMask)), makeOutlineMat(0, 0))
   );
 
-  // Jaws
+  // Lower Jaw (upper snout unified into cranium)
   const upperJawGroup = new THREE.Group();
-  upperJawGroup.position.set(xHead, 0.006, 0);
+  upperJawGroup.position.set(xHead, hy + 0.008, 0);
   bodyGroup.add(upperJawGroup);
-  const uGeo = track(
-    buildLoftedSurface({
-      xStart: xHead - 0.01,
-      xEnd: xSnout,
-      uSteps: 14,
-      vSteps: 18,
-      evalTopY: (x) => interpCurveY(topProf, x),
-      evalBotY: () => -0.005,
-      evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)),
-      mapUV,
-      localOffsetX: xHead,
-      localOffsetY: 0.006,
-      roundFront: true,
-    })
-  );
-  upperJawGroup.add(
-    new THREE.Mesh(uGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(uGeo, 0.0042)), makeOutlineMat(xHead, 0.006))
-  );
 
   const lowerJawGroup = new THREE.Group();
-  lowerJawGroup.position.set(xHead, -0.008, 0);
+  lowerJawGroup.position.set(xHead, hy - 0.008, 0);
   bodyGroup.add(lowerJawGroup);
   const lGeo = track(
     buildLoftedSurface({
-      xStart: xHead - 0.01,
-      xEnd: xSnout - 0.006,
-      uSteps: 14,
+      xStart: xHead - 0.018,
+      xEnd: xSnout - 0.01,
+      uSteps: 16,
       vSteps: 18,
-      evalTopY: () => 0.004,
-      evalBotY: (x) => interpCurveY(botProf, x),
-      evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)) * 0.92,
+      evalTopY: () => -0.024,
+      evalBotY: evalBot,
+      evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)) * 0.9,
       mapUV,
       localOffsetX: xHead,
-      localOffsetY: -0.008,
+      localOffsetY: hy - 0.008,
       roundFront: true,
+      rearInsetAt: (x) => (x < xHead ? smoothstep(xHead - 0.018, xHead + 0.008, x) * 0.92 + 0.08 : 1),
     })
   );
   lowerJawGroup.add(
     new THREE.Mesh(lGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0042)), makeOutlineMat(xHead, -0.008))
+    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0032, jawOutlineMask(0.006, 0.038))), makeOutlineMat(xHead, hy - 0.008))
   );
 
-  const { mouthInterior, tongueMesh } = createOralParts(ctx, bodyGroup, lowerJawGroup, xHead + 0.01, -0.002);
+  const { mouthInterior, tongueMesh } = createOralParts(
+    ctx,
+    bodyGroup,
+    lowerJawGroup,
+    xHead + 0.02,
+    hy,
+    "#5c0f24",
+    "#ff6a88",
+    [0.032, 0.022, 0.02],
+    [0.022, 0.009, 0.013],
+    0.034
+  );
 
-  // Tall Sickle 1st Dorsal Sail + Rounded 2nd Dorsal + Anal Fin
+  // 1st Dorsal Plume (tall non-crossing sickle crown)
   const d1Shape = new THREE.Shape();
-  d1Shape.moveTo(0.01, 0.16);
-  d1Shape.bezierCurveTo(0.04, 0.34, -0.04, 0.4, -0.14, 0.38);
-  d1Shape.bezierCurveTo(-0.08, 0.29, -0.05, 0.21, -0.06, 0.165);
+  d1Shape.moveTo(0.002, 0.095);
+  d1Shape.bezierCurveTo(0.004, 0.178, -0.032, 0.252, -0.112, 0.292);
+  d1Shape.bezierCurveTo(-0.048, 0.282, 0.065, 0.215, 0.112, 0.09);
   d1Shape.closePath();
   bodyGroup.add(
-    makeSpineFinMesh(ctx, d1Shape, 0, 0, 0.004, 0.001, (fc) => {
-      fc.fillStyle = makeLin(fc, 0, 0.15, -0.12, 0.39, [
-        [0, B],
-        [0.45, FIN],
-        [1, SPOT],
+    makeSpineFinMesh(ctx, d1Shape, 0, 0, 0.0034, 0.0008, (fc) => {
+      fc.fillStyle = makeLin(fc, -0.105, 0.292, 0.085, 0.092, [
+        [0, CYAN],
+        [0.28, "#ffe268"],
+        [0.62, ORN],
+        [1, "#2b42d6"],
       ]);
-      fc.fillRect(-0.18, 0.12, 0.26, 0.3);
-    }, maxAnisotropy, true, 0.0024).mesh
+      fc.fillRect(-0.15, 0.06, 0.3, 0.26);
+      fc.strokeStyle = "rgba(255,250,220,0.68)";
+      fc.lineWidth = 0.0034;
+      fc.beginPath();
+      fc.moveTo(0.088, 0.098);
+      fc.bezierCurveTo(0.048, 0.195, -0.025, 0.258, -0.095, 0.282);
+      fc.stroke();
+      fc.strokeStyle = rgbaHex(CYAN, 0.74);
+      fc.lineWidth = 0.003;
+      fc.beginPath();
+      fc.moveTo(0.048, 0.098);
+      fc.bezierCurveTo(0.022, 0.178, -0.018, 0.228, -0.065, 0.252);
+      fc.stroke();
+    }, maxAnisotropy, true, 0.001, undefined, (x, y) => smoothstep(evalTop(x) - 0.006, evalTop(x) + 0.016, y)).mesh
   );
 
+  // 2nd Dorsal Sail
   const d2Shape = new THREE.Shape();
-  d2Shape.moveTo(-0.24, 0.11);
-  d2Shape.quadraticCurveTo(-0.23, 0.26, -0.13, 0.25);
-  d2Shape.quadraticCurveTo(-0.08, 0.19, -0.09, 0.15);
+  d2Shape.moveTo(-0.172, 0.038);
+  d2Shape.bezierCurveTo(-0.182, 0.132, -0.125, 0.186, -0.048, 0.168);
+  d2Shape.bezierCurveTo(-0.018, 0.16, 0.004, 0.128, 0.01, 0.092);
   d2Shape.closePath();
   bodyGroup.add(
-    makeSpineFinMesh(ctx, d2Shape, 0, 0, 0.004, 0.001, (fc) => {
-      fc.fillStyle = makeLin(fc, -0.24, 0.11, -0.1, 0.26, [
-        [0, B],
-        [0.6, FIN],
-        [1, SPOT],
+    makeSpineFinMesh(ctx, d2Shape, 0, 0, 0.0034, 0.0008, (fc) => {
+      fc.fillStyle = makeLin(fc, -0.08, 0.185, -0.08, 0.045, [
+        [0, "#1d8ae8"],
+        [0.42, ORN],
+        [0.85, "#1154bd"],
+        [1, DK],
       ]);
-      fc.fillRect(-0.28, 0.08, 0.24, 0.22);
-    }, maxAnisotropy, true, 0.0024).mesh
+      fc.fillRect(-0.22, 0.02, 0.26, 0.2);
+      fc.strokeStyle = "rgba(255,245,210,0.38)";
+      fc.lineWidth = 0.0028;
+      for (let i = 0; i < 4; i++) {
+        const bx = -0.145 + i * 0.038;
+        fc.beginPath();
+        fc.moveTo(bx, 0.055);
+        fc.quadraticCurveTo(bx - 0.012, 0.115, bx - 0.022, 0.162);
+        fc.stroke();
+      }
+      fc.strokeStyle = rgbaHex(CYAN, 0.92);
+      fc.lineWidth = 0.0062;
+      fc.beginPath();
+      fc.moveTo(-0.168, 0.102);
+      fc.bezierCurveTo(-0.142, 0.168, -0.072, 0.174, -0.01, 0.142);
+      fc.stroke();
+      fc.fillStyle = rgbaHex("#ffe270", 0.88);
+      drawBlob(fc, -0.115, 0.118, 0.01, 0.007, 0.2);
+      drawBlob(fc, -0.068, 0.122, 0.01, 0.007, 0.15);
+      drawBlob(fc, -0.032, 0.116, 0.008, 0.006, 0);
+    }, maxAnisotropy, true, 0.001, undefined, (x, y) => smoothstep(evalTop(x) - 0.006, evalTop(x) + 0.016, y)).mesh
   );
 
+  // Anal Fin
   const aShape = new THREE.Shape();
-  aShape.moveTo(-0.23, -0.11);
-  aShape.quadraticCurveTo(-0.2, -0.24, -0.08, -0.22);
-  aShape.lineTo(-0.04, -0.16);
+  aShape.moveTo(-0.162, -0.042);
+  aShape.bezierCurveTo(-0.188, -0.125, -0.118, -0.17, -0.025, -0.145);
+  aShape.quadraticCurveTo(0.002, -0.128, 0.015, -0.092);
   aShape.closePath();
   bodyGroup.add(
-    makeSpineFinMesh(ctx, aShape, 0, 0, 0.0038, 0.001, (fc) => {
-      fc.fillStyle = FIN;
-      fc.fillRect(-0.26, -0.27, 0.26, 0.18);
-    }, maxAnisotropy, true, 0.0022).mesh
+    makeSpineFinMesh(ctx, aShape, 0, 0, 0.0032, 0.0008, (fc) => {
+      fc.fillStyle = makeLin(fc, -0.1, -0.055, -0.1, -0.168, [
+        [0, SAP],
+        [0.52, ORN],
+        [1, CRMS],
+      ]);
+      fc.fillRect(-0.22, -0.2, 0.26, 0.18);
+      fc.strokeStyle = rgbaHex(CYAN, 0.9);
+      fc.lineWidth = 0.0058;
+      fc.beginPath();
+      fc.moveTo(-0.155, -0.115);
+      fc.quadraticCurveTo(-0.1, -0.16, -0.028, -0.136);
+      fc.stroke();
+    }, maxAnisotropy, true, 0.001, undefined, (x, y) => smoothstep(evalBot(x) + 0.006, evalBot(x) - 0.016, y)).mesh
   );
+
+  // Paired Dragonet Pelvic Fan Fins
+  const pelvicFin = new THREE.Group();
+  pelvicFin.position.set(0.088, -0.086, 0);
+  bodyGroup.add(pelvicFin);
+  const pvShape = new THREE.Shape();
+  pvShape.moveTo(0, 0);
+  pvShape.bezierCurveTo(0.02, -0.072, -0.043, -0.106, -0.086, -0.069);
+  pvShape.quadraticCurveTo(-0.063, -0.032, -0.036, -0.002);
+  pvShape.closePath();
+  const pvObj = makeSpineFinMesh(ctx, pvShape, 0.088, -0.086, 0.0028, 0.0007, (fc) => {
+    fc.fillStyle = makeLin(fc, -0.01, -0.004, -0.06, -0.095, [
+      [0, SAP],
+      [0.5, ORN],
+      [1, CYAN],
+    ]);
+    fc.fillRect(-0.12, -0.13, 0.16, 0.15);
+  }, maxAnisotropy, true, 0.0009);
+  for (const s of [1, -1]) {
+    const m = s === 1 ? pvObj.mesh : pvObj.mesh.clone();
+    m.position.z = s * 0.028;
+    m.rotation.x = s * 0.22;
+    pelvicFin.add(m);
+  }
 
   // Ornate Peacock Tail Fan
   const tailPivot = new THREE.Group();
-  tailPivot.position.set(xTail + 0.012, 0, 0);
+  tailPivot.position.set(-0.158, 0, 0);
   bodyGroup.add(tailPivot);
   const tShape = new THREE.Shape();
-  tShape.moveTo(0, 0.044);
-  tShape.bezierCurveTo(-0.09, 0.16, -0.175, 0.145, -0.18, 0.04);
-  tShape.quadraticCurveTo(-0.19, 0, -0.18, -0.04);
-  tShape.bezierCurveTo(-0.175, -0.145, -0.09, -0.16, 0, -0.044);
+  tShape.moveTo(0.012, 0.032);
+  tShape.bezierCurveTo(-0.075, 0.105, -0.168, 0.145, -0.225, 0.088);
+  tShape.bezierCurveTo(-0.258, 0.042, -0.258, -0.042, -0.225, -0.088);
+  tShape.bezierCurveTo(-0.168, -0.145, -0.075, -0.105, 0.012, -0.032);
   tShape.closePath();
   tailPivot.add(
-    makeSpineFinMesh(ctx, tShape, xTail + 0.012, 0, 0.004, 0.001, (fc) => {
-      fc.fillStyle = makeLin(fc, 0, 0, -0.18, 0, [
-        [0, B],
-        [0.5, TAIL],
-        [1, SPOT],
+    makeSpineFinMesh(ctx, tShape, -0.158, 0, 0.0034, 0.0008, (fc) => {
+      fc.fillStyle = makeLin(fc, 0.01, 0, -0.255, 0, [
+        [0, "#1558cf"],
+        [0.36, ORN],
+        [0.74, CRMS],
+        [1, "#b81845"],
       ]);
-      fc.fillRect(-0.22, -0.2, 0.26, 0.4);
-      fc.fillStyle = rgbaHex(STR, 0.8);
-      drawBlob(fc, -0.09, 0.04, 0.025, 0.014, -0.2);
-      drawBlob(fc, -0.09, -0.04, 0.025, 0.014, 0.2);
-    }, maxAnisotropy, false, 0.0024).mesh
+      fc.fillRect(-0.28, -0.17, 0.32, 0.34);
+      fc.strokeStyle = "rgba(255,240,185,0.45)";
+      fc.lineWidth = 0.0032;
+      for (let i = -3; i <= 3; i++) {
+        fc.beginPath();
+        fc.moveTo(-0.005, i * 0.006);
+        fc.quadraticCurveTo(-0.115, i * 0.018, -0.225, i * 0.026);
+        fc.stroke();
+      }
+      fc.strokeStyle = rgbaHex(CYAN, 0.92);
+      fc.lineWidth = 0.007;
+      fc.beginPath();
+      fc.moveTo(-0.214, -0.084);
+      fc.quadraticCurveTo(-0.25, 0, -0.214, 0.084);
+      fc.stroke();
+      fc.fillStyle = rgbaHex(CYAN, 0.85);
+      for (let i = -2; i <= 2; i++) {
+        fc.beginPath();
+        fc.arc(-0.184 + Math.abs(i) * 0.008, i * 0.029, 0.0062, 0, Math.PI * 2);
+        fc.fill();
+      }
+    }, maxAnisotropy, false, 0.001).mesh
   );
 
+  // Gossamer Rounded Pectoral Wings
   const pShape = new THREE.Shape();
-  pShape.moveTo(0, 0.024);
-  pShape.quadraticCurveTo(-0.085, 0.058, -0.125, -0.02);
-  pShape.quadraticCurveTo(-0.06, -0.06, 0, -0.018);
+  pShape.moveTo(0, 0);
+  pShape.bezierCurveTo(-0.028, 0.038, -0.102, 0.022, -0.092, -0.032);
+  pShape.bezierCurveTo(-0.078, -0.076, -0.018, -0.064, 0, -0.016);
   pShape.closePath();
-  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.0035, 0.001, (fc) => {
-    fc.fillStyle = makeLin(fc, 0, 0, -0.13, 0, [
-      [0, SPOT],
-      [1, FIN],
+  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.0028, 0.0007, (fc) => {
+    fc.fillStyle = makeLin(fc, 0, 0, -0.09, -0.028, [
+      [0, rgbaHex(AQUA, 0.9)],
+      [0.58, rgbaHex(ORN, 0.85)],
+      [1, rgbaHex(CYAN, 0.92)],
     ]);
-    fc.fillRect(-0.16, -0.09, 0.2, 0.18);
-  }, maxAnisotropy, false, 0.002);
+    fc.fillRect(-0.12, -0.09, 0.14, 0.14);
+    drawFinRays(fc, [-0.006, -0.004], [[-0.076, -0.018], [-0.076, 0], [-0.076, 0.018], [-0.076, -0.036]], "rgba(255,255,255,0.52)", 0.0026);
+  }, maxAnisotropy, false, 0.0009, { transparent: true, opacity: 0.94 });
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.085, -0.05, 0.118);
+  pecLeft.position.set(0.105, -0.032, 0.074);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.085, -0.05, -0.118);
+  pecRight.position.set(0.105, -0.032, -0.074);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
-  const pelvicFin = new THREE.Group();
-  bodyGroup.add(pelvicFin);
-
+  // Gold-ringed emerald jewel eye
+  const eyeZ = surfaceZAt(evalTop, evalUnifiedBot, (x) => evalZ(x, (x - xTail) / (xSnout - xTail)), 0.228, 0.034);
+  const goldRingGeo = track(new THREE.CylinderGeometry(0.041 * 1.18, 0.041 * 1.18, 0.008, 22));
+  goldRingGeo.rotateX(Math.PI * 0.5);
+  const goldRingMat = track(
+    new THREE.MeshPhysicalMaterial({
+      color: "#ffae2b",
+      emissive: "#ffae2b",
+      emissiveIntensity: 0.25,
+      roughness: 0.28,
+    })
+  );
+  for (const s of [1, -1]) {
+    const gr = new THREE.Mesh(goldRingGeo, goldRingMat);
+    gr.position.set(0.228, 0.034, s * (eyeZ - 0.002));
+    gr.rotation.y = s * 0.2;
+    bodyGroup.add(gr);
+  }
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
-    ex: 0.215,
-    ey: 0.065,
-    ez: 0.086,
-    er: 0.048,
+    ex: 0.228,
+    ey: 0.034,
+    ez: eyeZ + 0.002,
+    er: 0.041,
     irisColor: pal.iris || "#18c98f",
-    rimColor: "#ffd23f",
+    rimColor: OL,
+    happyColor: "#ffe999",
   });
 
-  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.02, 0, SPOT, 0.052);
+  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.02, -0.015, CYAN, 0.05);
 
   return {
     speciesKey: sp.id,
-    tailPivotX: xTail + 0.012,
+    tailPivotX: -0.158,
     root,
     pitchGroup,
     yawGroup,
@@ -310,250 +498,331 @@ function createMandarin3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 function createAurora3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const pal = sp.pal;
   const OL = pal.outline || "#2a0b4a";
-  const B = pal.body; // rose-pink
-  const D = pal.dark; // deep orchid
-  const BEL = pal.belly; // pearl blush
-  const FIN = pal.fin; // lavender violet
-  const TAIL = pal.tail || "#4df5e8"; // iridescent cyan veil tip
-  const STR = pal.stripe || "#ffb3e6";
+  const ROSE = pal.body || "#ff85c0";
+  const AMET = pal.dark || "#6928a8";
+  const OPAL = pal.belly || "#ffe8f7";
+  const ORCH = pal.fin || "#9c5cf5";
+  const AUR = pal.tail || "#4df5e8";
+  const STAR = pal.spot || "#7df9ff";
 
   const ctx = createRigContext(OL, "#464646");
   const { track, uniforms, makeOutlineMat } = ctx;
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
-  const xTail = -0.18;
-  const xHead = 0.22;
-  const xSnout = 0.345;
+  const xTail = -0.085;
+  const xHead = 0.242;
+  const hy = -0.02;
+  const xSnout = 0.355;
 
-  const topProf: Pt[] = [
-    [xTail, 0.046],
-    [-0.08, 0.092],
-    [0.06, 0.128],
-    [0.18, 0.118],
-    [xHead, 0.105],
-    [0.29, 0.058],
-    [xSnout, 0.01],
-  ];
-  const botProf: Pt[] = [
-    [xTail, -0.044],
-    [-0.08, -0.086],
-    [0.06, -0.122],
-    [0.18, -0.112],
-    [xHead, -0.098],
-    [0.29, -0.052],
-    [xSnout, -0.012],
-  ];
+  const topProf = sampleBezierChain(
+    [
+      [[-0.085, 0.044], [0.01, 0.098], [0.155, 0.105], [0.255, 0.068]],
+      [[0.255, 0.068], [0.305, 0.048], [0.338, 0.018], [xSnout, -0.008]],
+    ],
+    22
+  );
+  const botProf = sampleBezierChain(
+    [
+      [[-0.085, -0.045], [-0.02, -0.075], [0.07, -0.095], [0.185, -0.084]],
+      [[0.185, -0.084], [0.295, -0.072], [0.324, -0.036], [0.344, -0.024]],
+    ],
+    22
+  );
   const evalZ = (x: number, t: number) => {
-    const base = 0.022 + 0.078 * Math.sin(Math.pow(clamp(t, 0, 1), 0.76) * Math.PI);
-    return x > 0.22 ? base * clamp(1 - (x - 0.22) / 0.16, 0.36, 1) : base;
+    const base = 0.018 + 0.064 * Math.sin(Math.pow(clamp(t, 0, 1), 0.76) * Math.PI);
+    return x > 0.23 ? base * clamp(1 - (x - 0.23) / 0.15, 0.34, 1) : base;
   };
 
-  // Paint Iridescent Rose-Opal Scale Shimmer Body
+  const { mapUV, beginCanvas2D } = createWorldMapper(-0.1, 0.37, -0.115, 0.115, 512);
   const bodyCv = document.createElement("canvas");
   bodyCv.width = 512;
   bodyCv.height = 512;
   const bc = bodyCv.getContext("2d")!;
-  bc.fillStyle = makeLin(bc, 0, 0, 512, 512, [
-    [0, D],
-    [0.35, B],
-    [0.72, STR],
-    [1, BEL],
+  beginCanvas2D(bc);
+  bc.fillStyle = makeLin(bc, 0.08, -0.105, 0.08, 0.095, [
+    [0, AMET],
+    [0.34, ORCH],
+    [0.64, ROSE],
+    [1, OPAL],
   ]);
-  bc.fillRect(0, 0, 512, 512);
-  drawGlow(bc, 280, 210, 180, 75, -0.1, "125,249,255", 0.32);
+  bc.fillRect(-0.2, -0.2, 0.7, 0.4);
+  drawGlow(bc, 0.08, -0.04, 0.19, 0.055, -0.08, "125,249,255", 0.34);
+  drawGlow(bc, 0.17, 0.02, 0.12, 0.05, 0, "255,190,235", 0.45);
+
+  bc.strokeStyle = rgbaHex(STAR, 0.45);
+  bc.lineWidth = 0.003;
+  for (let r = 0; r < 3; r++) {
+    for (let col = 0; col < 5; col++) {
+      const sx = -0.03 + col * 0.042 + (r % 2) * 0.02;
+      const sy = -0.035 + r * 0.035;
+      bc.beginPath();
+      bc.arc(sx, sy, 0.022, -Math.PI * 0.35, Math.PI * 0.35);
+      bc.stroke();
+    }
+  }
+  bc.fillStyle = "rgba(255,110,175,0.44)";
+  drawBlob(bc, 0.21, 0.032, 0.024, 0.015, 0.1);
+  bc.strokeStyle = rgbaHex(AMET, 0.55);
+  bc.lineWidth = 0.004;
+  bc.beginPath();
+  bc.arc(0.145, 0.005, 0.045, -Math.PI * 0.32, Math.PI * 0.38);
+  bc.stroke();
+  bc.restore();
 
   const bodyTex = track(new THREE.CanvasTexture(bodyCv));
   bodyTex.colorSpace = THREE.SRGBColorSpace;
   bodyTex.anisotropy = maxAnisotropy;
 
-  const mapUV = (x: number, y: number): Pt => [
-    clamp((x - xTail) / (xSnout - xTail), 0.01, 0.99),
-    clamp((y + 0.14) / 0.28, 0.01, 0.99),
-  ];
+  const evalTop = (x: number) => interpCurveY(topProf, x);
+  const evalBot = (x: number) => interpCurveY(botProf, x);
+  const evalUpperPalate = () => -0.018;
+  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, xHead);
+  const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
+  const auroraMask = bodySpineOutlineMask(
+    evalMidY,
+    [
+      { x0: -0.085, x1: 0.115, top: true },
+      { x0: -0.085, x1: 0.125, top: false },
+    ],
+    0.024
+  );
 
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: xTail,
-      xEnd: xHead,
-      uSteps: 32,
+      xEnd: xSnout,
+      uSteps: 40,
       vSteps: 22,
-      evalTopY: (x) => interpCurveY(topProf, x),
-      evalBotY: (x) => interpCurveY(botProf, x),
+      evalTopY: evalTop,
+      evalBotY: evalUnifiedBot,
       evalHalfZ: evalZ,
       mapUV,
       rearBulge: 0.004,
-      capFront: false,
+      roundFront: true,
     })
   );
-  const bodyMat = ctx.makeFishMat(bodyTex, { emissiveIntensity: 0.34, clearcoat: 0.6 });
+  const bodyMat = ctx.makeFishMat(bodyTex, { emissiveIntensity: 0.32, clearcoat: 0.58 });
   injectSpineShader(bodyMat, uniforms, 0, 0);
   bodyGroup.add(
     new THREE.Mesh(bodyGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0048)), makeOutlineMat(0, 0))
+    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0036, auroraMask)), makeOutlineMat(0, 0))
   );
 
-  // Jaws
+  // Lower Jaw (upper snout unified cleanly into cranium)
   const upperJawGroup = new THREE.Group();
-  upperJawGroup.position.set(xHead, 0.005, 0);
+  upperJawGroup.position.set(xHead, hy + 0.008, 0);
   bodyGroup.add(upperJawGroup);
-  const uGeo = track(
-    buildLoftedSurface({
-      xStart: xHead - 0.01,
-      xEnd: xSnout,
-      uSteps: 14,
-      vSteps: 18,
-      evalTopY: (x) => interpCurveY(topProf, x),
-      evalBotY: () => -0.004,
-      evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)),
-      mapUV,
-      localOffsetX: xHead,
-      localOffsetY: 0.005,
-      roundFront: true,
-    })
-  );
-  upperJawGroup.add(
-    new THREE.Mesh(uGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(uGeo, 0.0038)), makeOutlineMat(xHead, 0.005))
-  );
 
   const lowerJawGroup = new THREE.Group();
-  lowerJawGroup.position.set(xHead, -0.006, 0);
+  lowerJawGroup.position.set(xHead, hy - 0.006, 0);
   bodyGroup.add(lowerJawGroup);
   const lGeo = track(
     buildLoftedSurface({
-      xStart: xHead - 0.01,
-      xEnd: xSnout - 0.005,
-      uSteps: 14,
+      xStart: xHead - 0.018,
+      xEnd: xSnout - 0.01,
+      uSteps: 16,
       vSteps: 18,
-      evalTopY: () => 0.003,
-      evalBotY: (x) => interpCurveY(botProf, x),
+      evalTopY: () => -0.018,
+      evalBotY: evalBot,
       evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)) * 0.9,
       mapUV,
       localOffsetX: xHead,
-      localOffsetY: -0.006,
+      localOffsetY: hy - 0.006,
       roundFront: true,
+      rearInsetAt: (x) => (x < xHead ? smoothstep(xHead - 0.018, xHead + 0.008, x) * 0.92 + 0.08 : 1),
     })
   );
   lowerJawGroup.add(
     new THREE.Mesh(lGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0038)), makeOutlineMat(xHead, -0.006))
+    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.003, jawOutlineMask(0.006, 0.038))), makeOutlineMat(xHead, hy - 0.006))
   );
 
-  const { mouthInterior, tongueMesh } = createOralParts(ctx, bodyGroup, lowerJawGroup, xHead + 0.008, -0.002);
+  const { mouthInterior, tongueMesh } = createOralParts(
+    ctx,
+    bodyGroup,
+    lowerJawGroup,
+    xHead + 0.018,
+    hy,
+    "#591032",
+    "#ff78a5",
+    [0.03, 0.02, 0.018],
+    [0.022, 0.008, 0.012],
+    0.032
+  );
 
-  // Colossal 180° Halfmoon Iridescent Flowing Tail Veil!
+  // Colossal 180° Halfmoon Silk Veil Tail
   const tailPivot = new THREE.Group();
-  tailPivot.position.set(xTail + 0.01, 0, 0);
+  tailPivot.position.set(-0.04, 0, 0);
   bodyGroup.add(tailPivot);
   const tShape = new THREE.Shape();
-  tShape.moveTo(0, 0.044);
-  tShape.bezierCurveTo(-0.08, 0.25, -0.26, 0.34, -0.37, 0.21);
-  tShape.bezierCurveTo(-0.42, 0.1, -0.43, -0.1, -0.37, -0.21);
-  tShape.bezierCurveTo(-0.26, -0.34, -0.08, -0.25, 0, -0.044);
+  tShape.moveTo(0.02, 0.048);
+  tShape.bezierCurveTo(-0.08, 0.18, -0.22, 0.35, -0.375, 0.305);
+  tShape.bezierCurveTo(-0.435, 0.18, -0.455, 0.06, -0.438, 0);
+  tShape.bezierCurveTo(-0.455, -0.07, -0.43, -0.2, -0.368, -0.312);
+  tShape.bezierCurveTo(-0.21, -0.348, -0.075, -0.178, 0.02, -0.05);
   tShape.closePath();
   tailPivot.add(
     makeSpineFinMesh(
       ctx,
       tShape,
-      xTail + 0.01,
+      -0.04,
       0,
-      0.003,
-      0.0008,
+      0.0026,
+      0.0006,
       (fc) => {
-        fc.fillStyle = makeLin(fc, 0, 0, -0.42, 0, [
-          [0, D],
-          [0.35, B],
-          [0.68, FIN],
-          [1, TAIL],
+        fc.fillStyle = makeLin(fc, 0.02, 0, -0.44, 0, [
+          [0, AMET],
+          [0.32, ORCH],
+          [0.65, ROSE],
+          [0.88, "#ffbde8"],
+          [1, AUR],
         ]);
-        fc.fillRect(-0.46, -0.38, 0.5, 0.76);
-        fc.strokeStyle = rgbaHex("#ffffff", 0.55);
-        fc.lineWidth = 0.004;
-        for (let i = -6; i <= 6; i++) {
+        fc.fillRect(-0.48, -0.38, 0.54, 0.76);
+        fc.strokeStyle = rgbaHex(AUR, 0.88);
+        fc.lineWidth = 0.015;
+        fc.beginPath();
+        fc.moveTo(-0.358, 0.29);
+        fc.bezierCurveTo(-0.432, 0.12, -0.432, -0.12, -0.352, -0.295);
+        fc.stroke();
+        fc.strokeStyle = "rgba(255,250,255,0.48)";
+        fc.lineWidth = 0.0032;
+        for (let i = -5; i <= 5; i++) {
+          const ang = i * 0.16;
+          const ex = -Math.cos(ang) * 0.39;
+          const ey = Math.sin(ang) * 0.305;
           fc.beginPath();
-          fc.moveTo(-0.01, i * 0.005);
-          fc.quadraticCurveTo(-0.2, i * 0.032, -0.4, i * 0.045);
+          fc.moveTo(0, i * 0.006);
+          fc.quadraticCurveTo(ex * 0.52, ey * 0.52, ex, ey);
           fc.stroke();
         }
+        fc.fillStyle = "rgba(255,255,255,0.82)";
+        drawBlob(fc, -0.28, 0.14, 0.01, 0.007, -0.3);
+        drawBlob(fc, -0.33, -0.05, 0.011, 0.007, 0.2);
+        drawBlob(fc, -0.26, -0.17, 0.009, 0.006, -0.1);
       },
       maxAnisotropy,
       false,
-      0.002,
-      { transparent: true, opacity: 0.9, emissiveIntensity: 0.38 }
+      0.0009,
+      { transparent: true, opacity: 0.9, emissiveIntensity: 0.36 }
     ).mesh
   );
 
-  // Flowing Crown Dorsal & Ventral Silk Veils
+  // Sweeping Crown Dorsal Silk Veil
   const dShape = new THREE.Shape();
-  dShape.moveTo(-0.18, 0.045);
-  dShape.bezierCurveTo(-0.26, 0.28, -0.12, 0.37, 0.02, 0.31);
-  dShape.bezierCurveTo(0.08, 0.25, 0.09, 0.16, 0.095, 0.12);
+  dShape.moveTo(0.115, 0.075);
+  dShape.bezierCurveTo(0.06, 0.19, -0.04, 0.345, -0.185, 0.345);
+  dShape.bezierCurveTo(-0.155, 0.245, -0.125, 0.145, -0.065, 0.052);
   dShape.closePath();
   bodyGroup.add(
-    makeSpineFinMesh(ctx, dShape, 0, 0, 0.003, 0.0008, (fc) => {
-      fc.fillStyle = makeLin(fc, 0, 0.06, -0.15, 0.36, [
-        [0, B],
-        [0.55, FIN],
-        [1, TAIL],
+    makeSpineFinMesh(ctx, dShape, 0, 0, 0.0026, 0.0006, (fc) => {
+      fc.fillStyle = makeLin(fc, 0.05, 0.07, -0.17, 0.34, [
+        [0, ORCH],
+        [0.52, ROSE],
+        [1, AUR],
       ]);
-      fc.fillRect(-0.32, 0.02, 0.46, 0.4);
-    }, maxAnisotropy, true, 0.002, { transparent: true, opacity: 0.9, emissiveIntensity: 0.35 }).mesh
+      fc.fillRect(-0.22, 0.02, 0.38, 0.36);
+      fc.strokeStyle = "rgba(255,255,255,0.5)";
+      fc.lineWidth = 0.003;
+      for (let i = 0; i < 5; i++) {
+        fc.beginPath();
+        fc.moveTo(0.08 - i * 0.032, 0.07);
+        fc.quadraticCurveTo(0.01 - i * 0.042, 0.2, -0.095 - i * 0.02, 0.295 + i * 0.008);
+        fc.stroke();
+      }
+    }, maxAnisotropy, true, 0.0009, { transparent: true, opacity: 0.9, emissiveIntensity: 0.34 }, (x, y) =>
+      smoothstep(evalTop(x) - 0.006, evalTop(x) + 0.016, y)
+    ).mesh
   );
 
+  // Long Flowing Ventral / Anal Ribbon Veil
   const aShape = new THREE.Shape();
-  aShape.moveTo(-0.18, -0.045);
-  aShape.bezierCurveTo(-0.27, -0.27, -0.14, -0.36, 0.0, -0.3);
-  aShape.bezierCurveTo(0.06, -0.22, 0.075, -0.15, 0.08, -0.115);
+  aShape.moveTo(0.125, -0.072);
+  aShape.bezierCurveTo(0.05, -0.205, -0.055, -0.355, -0.215, -0.345);
+  aShape.bezierCurveTo(-0.155, -0.245, -0.12, -0.145, -0.058, -0.048);
   aShape.closePath();
   bodyGroup.add(
-    makeSpineFinMesh(ctx, aShape, 0, 0, 0.003, 0.0008, (fc) => {
-      fc.fillStyle = makeLin(fc, 0, -0.06, -0.15, -0.36, [
-        [0, B],
-        [0.55, FIN],
-        [1, TAIL],
+    makeSpineFinMesh(ctx, aShape, 0, 0, 0.0026, 0.0006, (fc) => {
+      fc.fillStyle = makeLin(fc, 0.06, -0.06, -0.19, -0.34, [
+        [0, ORCH],
+        [0.55, ROSE],
+        [1, AUR],
       ]);
-      fc.fillRect(-0.32, -0.4, 0.44, 0.38);
-    }, maxAnisotropy, true, 0.002, { transparent: true, opacity: 0.9, emissiveIntensity: 0.35 }).mesh
+      fc.fillRect(-0.24, -0.38, 0.4, 0.36);
+      fc.strokeStyle = "rgba(255,255,255,0.48)";
+      fc.lineWidth = 0.003;
+      for (let i = 0; i < 5; i++) {
+        fc.beginPath();
+        fc.moveTo(0.09 - i * 0.034, -0.065);
+        fc.quadraticCurveTo(0.01 - i * 0.042, -0.2, -0.1 - i * 0.025, -0.29 - i * 0.01);
+        fc.stroke();
+      }
+    }, maxAnisotropy, true, 0.0009, { transparent: true, opacity: 0.9, emissiveIntensity: 0.34 }, (x, y) =>
+      smoothstep(evalBot(x) + 0.006, evalBot(x) - 0.016, y)
+    ).mesh
   );
 
-  // Flowing Ribbon Pectorals
-  const pShape = new THREE.Shape();
-  pShape.moveTo(0, 0.02);
-  pShape.bezierCurveTo(-0.08, 0.075, -0.165, 0.025, -0.145, -0.06);
-  pShape.quadraticCurveTo(-0.07, -0.09, 0, -0.015);
-  pShape.closePath();
-  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.003, 0.0008, (fc) => {
-    fc.fillStyle = makeLin(fc, 0, 0, -0.16, 0, [
-      [0, B],
-      [1, TAIL],
+  // Paired Delicate Silk Pelvic Ribbon Streamers
+  const pelvicFin = new THREE.Group();
+  pelvicFin.position.set(0.155, -0.075, 0);
+  bodyGroup.add(pelvicFin);
+  const pvShape = new THREE.Shape();
+  pvShape.moveTo(0, 0);
+  pvShape.bezierCurveTo(-0.025, -0.11, -0.1, -0.21, -0.17, -0.23);
+  pvShape.bezierCurveTo(-0.125, -0.15, -0.08, -0.07, -0.04, -0.007);
+  pvShape.closePath();
+  const pvObj = makeSpineFinMesh(ctx, pvShape, 0.155, -0.075, 0.0022, 0.0006, (fc) => {
+    fc.fillStyle = makeLin(fc, -0.01, -0.005, -0.15, -0.22, [
+      [0, OPAL],
+      [0.6, "#ff99d6"],
+      [1, AUR],
     ]);
-    fc.fillRect(-0.2, -0.12, 0.24, 0.24);
-  }, maxAnisotropy, false, 0.0018, { transparent: true, opacity: 0.88 });
+    fc.fillRect(-0.2, -0.26, 0.24, 0.28);
+  }, maxAnisotropy, true, 0.0008, { transparent: true, opacity: 0.92 });
+  for (const s of [1, -1]) {
+    const m = s === 1 ? pvObj.mesh : pvObj.mesh.clone();
+    m.position.z = s * 0.018;
+    m.rotation.x = s * 0.14;
+    pelvicFin.add(m);
+  }
+
+  // Gossamer Opal Pectorals
+  const pShape = new THREE.Shape();
+  pShape.moveTo(0, 0);
+  pShape.bezierCurveTo(-0.04, 0.048, -0.145, 0.018, -0.135, -0.042);
+  pShape.bezierCurveTo(-0.11, -0.088, -0.03, -0.068, 0, -0.015);
+  pShape.closePath();
+  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.0024, 0.0006, (fc) => {
+    fc.fillStyle = makeLin(fc, 0, 0, -0.13, -0.04, [
+      [0, "rgba(255,240,252,0.88)"],
+      [0.65, "rgba(185,135,255,0.8)"],
+      [1, "rgba(77,245,232,0.9)"],
+    ]);
+    fc.fillRect(-0.16, -0.1, 0.18, 0.16);
+  }, maxAnisotropy, false, 0.0008, { transparent: true, opacity: 0.88 });
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.11, -0.035, 0.088);
+  pecLeft.position.set(0.13, -0.024, 0.062);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.11, -0.035, -0.088);
+  pecRight.position.set(0.13, -0.024, -0.062);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
-  const pelvicFin = new THREE.Group();
-  bodyGroup.add(pelvicFin);
-
+  const eyeZ = surfaceZAt(evalTop, evalUnifiedBot, (x) => evalZ(x, (x - xTail) / (xSnout - xTail)), 0.242, 0.024);
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
-    ex: 0.23,
-    ey: 0.042,
-    ez: 0.068,
-    er: 0.038,
+    ex: 0.242,
+    ey: 0.024,
+    ez: eyeZ,
+    er: 0.043,
     irisColor: pal.iris || "#2d68e6",
     rimColor: OL,
+    happyColor: "#ffffff",
   });
 
-  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.02, 0, TAIL, 0.05);
+  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.02, -0.008, AUR, 0.048);
 
   return {
     speciesKey: sp.id,
-    tailPivotX: xTail + 0.01,
+    tailPivotX: -0.04,
     root,
     pitchGroup,
     yawGroup,
@@ -584,130 +853,135 @@ function createAurora3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 function createNarwhal3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const pal = sp.pal;
   const OL = pal.outline || "#1a1047";
-  const B = pal.body;
-  const D = pal.dark;
-  const BEL = pal.belly;
-  const FIN = pal.fin;
+  const LAV = pal.body || "#8e78ff";
+  const IND = pal.dark || "#4432a8";
+  const PRL = pal.belly || "#f7f4ff";
+  const FIN = pal.fin || "#6b54e8";
   const TAIL = pal.tail || "#5746cc";
-  const HORN = pal.stripe || "#ffe58f";
-  const SPOT = pal.spot || "#b5f4ff";
+  const GOLD = pal.stripe || "#ffe58f";
+  const STAR = pal.spot || "#b5f4ff";
 
   const ctx = createRigContext(OL, "#4a4a4a");
   const { track, uniforms, makeOutlineMat } = ctx;
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
-  const xTail = -0.35;
-  const xHead = 0.16;
-  const xSnout = 0.27;
+  const xTail = -0.245;
+  const xHead = 0.185;
+  const hy = -0.058;
+  const xSnout = 0.292;
 
-  const topProf: Pt[] = [
-    [xTail, 0.025],
-    [-0.22, 0.088],
-    [-0.06, 0.155],
-    [0.09, 0.172],
-    [xHead, 0.165],
-    [0.24, 0.115],
-    [xSnout, 0.022],
-  ];
-  const botProf: Pt[] = [
-    [xTail, -0.024],
-    [-0.22, -0.078],
-    [-0.06, -0.14],
-    [0.09, -0.15],
-    [xHead, -0.135],
-    [0.24, -0.088],
-    [xSnout, -0.022],
-  ];
+  const topProf = sampleBezierChain(
+    [
+      [[-0.245, 0.028], [-0.145, 0.108], [0.02, 0.142], [0.175, 0.118]],
+      [[0.175, 0.118], [0.238, 0.105], [0.278, 0.072], [xSnout, 0.008]],
+    ],
+    22
+  );
+  const botProf = sampleBezierChain(
+    [
+      [[-0.245, -0.032], [-0.135, -0.09], [0.015, -0.12], [0.135, -0.106]],
+      [[0.135, -0.106], [0.225, -0.1], [0.258, -0.074], [0.274, -0.064]],
+    ],
+    22
+  );
   const evalZ = (x: number, t: number) => {
-    const base = 0.022 + 0.125 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
-    return x > 0.18 ? base * clamp(1 - (x - 0.18) / 0.14, 0.35, 1) : base;
+    const base = 0.022 + 0.104 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
+    return x > 0.19 ? base * clamp(1 - (x - 0.19) / 0.12, 0.36, 1) : base;
   };
 
-  // Paint Moonlit Lavender + Pearl Belly + Dappled Ice-Cyan Spots
+  const { mapUV, beginCanvas2D } = createWorldMapper(-0.26, 0.305, -0.145, 0.155, 512);
   const bodyCv = document.createElement("canvas");
   bodyCv.width = 512;
   bodyCv.height = 512;
   const bc = bodyCv.getContext("2d")!;
-  bc.fillStyle = makeLin(bc, 0, 0, 0, 512, [
-    [0, D],
-    [0.42, B],
-    [0.64, mixHex(B, BEL, 0.65)],
-    [0.75, BEL],
-    [1, BEL],
+  beginCanvas2D(bc);
+  bc.fillStyle = makeLin(bc, 0, -0.14, 0, 0.12, [
+    [0, IND],
+    [0.42, LAV],
+    [0.72, "#c6bdff"],
+    [1, PRL],
   ]);
-  bc.fillRect(0, 0, 512, 512);
+  bc.fillRect(-0.35, -0.25, 0.8, 0.5);
 
-  bc.fillStyle = rgbaHex(SPOT, 0.85);
-  for (let i = 0; i < 16; i++) {
-    drawBlob(bc, 75 + (i * 49) % 345, 72 + ((i * 37) % 155), 11 + (i % 3) * 4, 8 + (i % 2) * 3, 0.2);
+  // Pearl underbelly wave
+  bc.fillStyle = makeLin(bc, 0, 0.02, 0, 0.12, [
+    [0, PRL],
+    [0.72, "#eee8ff"],
+    [1, "#d2c8f7"],
+  ]);
+  bc.beginPath();
+  bc.moveTo(-0.25, 0.018);
+  bc.bezierCurveTo(-0.11, 0.035, 0.06, 0.048, 0.285, 0.045);
+  bc.lineTo(0.295, 0.16);
+  bc.lineTo(-0.26, 0.15);
+  bc.closePath();
+  bc.fill();
+
+  drawGlow(bc, 0.08, -0.09, 0.18, 0.04, -0.05, "215,245,255", 0.34);
+
+  const dots: [number, number, number, number, number, number][] = [
+    [-0.08, -0.065, 0.022, 0.011, -0.15, 0.58],
+    [-0.01, -0.085, 0.026, 0.012, 0.08, 0.58],
+    [0.065, -0.078, 0.02, 0.01, -0.1, 0.62],
+    [0.125, -0.058, 0.018, 0.009, 0.15, 0.58],
+    [-0.145, -0.04, 0.019, 0.01, -0.12, 0.48],
+    [-0.045, -0.035, 0.015, 0.008, 0.05, 0.52],
+    [0.035, -0.042, 0.016, 0.008, -0.2, 0.48],
+  ];
+  for (const [dx, dy, rx, ry, rot, a] of dots) {
+    bc.fillStyle = rgbaHex(STAR, a);
+    drawBlob(bc, dx, dy, rx, ry, rot);
   }
+  bc.fillStyle = "rgba(255,130,185,0.52)";
+  drawBlob(bc, 0.17, 0.045, 0.025, 0.015, 0.08);
+  bc.restore();
 
   const bodyTex = track(new THREE.CanvasTexture(bodyCv));
   bodyTex.colorSpace = THREE.SRGBColorSpace;
   bodyTex.anisotropy = maxAnisotropy;
 
-  const mapUV = (x: number, y: number): Pt => [
-    clamp((x - xTail) / (xSnout - xTail), 0.01, 0.99),
-    clamp((y + 0.185) / 0.37, 0.01, 0.99),
-  ];
+  const evalTop = (x: number) => interpCurveY(topProf, x);
+  const evalBot = (x: number) => interpCurveY(botProf, x);
+  const evalUpperPalate = () => -0.052;
+  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, xHead);
 
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: xTail,
-      xEnd: xHead,
-      uSteps: 36,
+      xEnd: xSnout,
+      uSteps: 42,
       vSteps: 26,
-      evalTopY: (x) => interpCurveY(topProf, x),
-      evalBotY: (x) => interpCurveY(botProf, x),
+      evalTopY: evalTop,
+      evalBotY: evalUnifiedBot,
       evalHalfZ: evalZ,
       mapUV,
       rearBulge: 0.004,
-      capFront: false,
+      roundFront: true,
     })
   );
   const bodyMat = ctx.makeFishMat(bodyTex, { emissiveIntensity: 0.3 });
   injectSpineShader(bodyMat, uniforms, 0, 0);
   bodyGroup.add(
     new THREE.Mesh(bodyGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.005)), makeOutlineMat(0, 0))
+    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0038)), makeOutlineMat(0, 0))
   );
 
-  // Rounded Forehead Upper Jaw + Iconic Long Spiraled Ivory Tusk!
+  // Empty upperJawGroup compat anchor; Spiraled Golden-Ivory Tusk attached to cranium
   const upperJawGroup = new THREE.Group();
-  upperJawGroup.position.set(xHead, 0.004, 0);
+  upperJawGroup.position.set(xHead, hy + 0.016, 0);
   bodyGroup.add(upperJawGroup);
-  const uGeo = track(
-    buildLoftedSurface({
-      xStart: xHead - 0.01,
-      xEnd: xSnout,
-      uSteps: 14,
-      vSteps: 18,
-      evalTopY: (x) => interpCurveY(topProf, x),
-      evalBotY: () => -0.014,
-      evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)),
-      mapUV,
-      localOffsetX: xHead,
-      localOffsetY: 0.004,
-      roundFront: true,
-    })
-  );
-  upperJawGroup.add(
-    new THREE.Mesh(uGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(uGeo, 0.0042)), makeOutlineMat(xHead, 0.004))
-  );
 
-  // Spiraled Golden-Ivory Narwhal Horn!
   const hornCv = document.createElement("canvas");
   hornCv.width = 256;
   hornCv.height = 256;
   const hc = hornCv.getContext("2d")!;
   hc.fillStyle = makeLin(hc, 0, 0, 0, 256, [
-    [0, "#fffdf5"],
-    [0.5, HORN],
-    [1, "#e5b84b"],
+    [0, "#fffdf2"],
+    [0.45, GOLD],
+    [1, "#d99b26"],
   ]);
   hc.fillRect(0, 0, 256, 256);
-  hc.strokeStyle = "#b58322";
+  hc.strokeStyle = "rgba(175,110,15,0.68)";
   hc.lineWidth = 10;
   for (let i = -2; i < 8; i++) {
     hc.beginPath();
@@ -715,97 +989,145 @@ function createNarwhal3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     hc.lineTo(256, i * 42 + 64);
     hc.stroke();
   }
+  hc.strokeStyle = "rgba(255,255,255,0.82)";
+  hc.lineWidth = 4;
+  for (let i = -2; i < 8; i++) {
+    hc.beginPath();
+    hc.moveTo(0, i * 42 - 10);
+    hc.lineTo(256, i * 42 + 54);
+    hc.stroke();
+  }
   const hornTex = track(new THREE.CanvasTexture(hornCv));
   hornTex.colorSpace = THREE.SRGBColorSpace;
-  const hornLen = 0.34;
-  const hornGeo = track(new THREE.ConeGeometry(0.022, hornLen, 14));
+  hornTex.anisotropy = maxAnisotropy;
+  const tuskLen = 0.235;
+  const hornGeo = track(new THREE.ConeGeometry(0.018, tuskLen, 16));
   hornGeo.rotateZ(-Math.PI * 0.5);
+  hornGeo.translate(tuskLen * 0.5, 0, 0);
   const hornMat = ctx.makeFishMat(hornTex, { clearcoat: 0.72, emissiveIntensity: 0.3 });
   const hornMesh = new THREE.Mesh(hornGeo, hornMat);
-  hornMesh.position.set(xSnout - xHead + hornLen * 0.42, 0.028, 0);
-  hornMesh.rotation.z = 0.06;
-  hornMesh.add(new THREE.Mesh(track(buildOutlineGeometry(hornGeo, 0.0028)), makeOutlineMat(0, 0, false)));
-  upperJawGroup.add(hornMesh);
+  hornMesh.position.set(0.248, 0.026, 0);
+  hornMesh.rotation.z = 0.15;
+  hornMesh.add(new THREE.Mesh(track(buildOutlineGeometry(hornGeo, 0.002)), makeOutlineMat(0, 0, false)));
+  bodyGroup.add(hornMesh);
 
   // Lower Jaw
   const lowerJawGroup = new THREE.Group();
-  lowerJawGroup.position.set(xHead, -0.02, 0);
+  lowerJawGroup.position.set(xHead, hy - 0.008, 0);
   bodyGroup.add(lowerJawGroup);
   const lGeo = track(
     buildLoftedSurface({
-      xStart: xHead - 0.01,
-      xEnd: xSnout - 0.01,
-      uSteps: 14,
+      xStart: xHead - 0.018,
+      xEnd: xSnout - 0.016,
+      uSteps: 16,
       vSteps: 18,
-      evalTopY: () => 0.004,
-      evalBotY: (x) => interpCurveY(botProf, x),
+      evalTopY: () => -0.052,
+      evalBotY: evalBot,
       evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)) * 0.9,
       mapUV,
       localOffsetX: xHead,
-      localOffsetY: -0.02,
+      localOffsetY: hy - 0.008,
       roundFront: true,
+      rearInsetAt: (x) => (x < xHead ? smoothstep(xHead - 0.018, xHead + 0.008, x) * 0.92 + 0.08 : 1),
     })
   );
   lowerJawGroup.add(
     new THREE.Mesh(lGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.004)), makeOutlineMat(xHead, -0.02))
+    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0032, jawOutlineMask(0.006, 0.038))), makeOutlineMat(xHead, hy - 0.008))
   );
 
-  const { mouthInterior, tongueMesh } = createOralParts(ctx, bodyGroup, lowerJawGroup, xHead + 0.01, -0.008);
+  const { mouthInterior, tongueMesh } = createOralParts(
+    ctx,
+    bodyGroup,
+    lowerJawGroup,
+    xHead + 0.016,
+    hy,
+    "#5c1438",
+    "#ff7aa8",
+    [0.032, 0.024, 0.022],
+    [0.022, 0.009, 0.013],
+    0.03
+  );
 
-  // Horizontal Cetacean Tail Fluke!
+  // Horizontal Crescent Whale Fluke
   const tailPivot = new THREE.Group();
-  tailPivot.position.set(xTail + 0.015, 0, 0);
+  tailPivot.position.set(-0.24, -0.005, 0);
   bodyGroup.add(tailPivot);
   const fShape = new THREE.Shape();
-  fShape.moveTo(0, 0.025);
-  fShape.bezierCurveTo(-0.07, 0.095, -0.125, 0.155, -0.155, 0.16);
-  fShape.bezierCurveTo(-0.105, 0.075, -0.07, 0.025, -0.055, 0);
-  fShape.bezierCurveTo(-0.07, -0.025, -0.105, -0.075, -0.155, -0.16);
-  fShape.bezierCurveTo(-0.125, -0.155, -0.07, -0.095, 0, -0.025);
+  fShape.moveTo(0.02, 0.028);
+  fShape.bezierCurveTo(-0.07, 0.06, -0.155, 0.165, -0.215, 0.18);
+  fShape.bezierCurveTo(-0.18, 0.095, -0.145, 0.032, -0.105, 0);
+  fShape.bezierCurveTo(-0.145, -0.032, -0.18, -0.095, -0.215, -0.18);
+  fShape.bezierCurveTo(-0.155, -0.165, -0.07, -0.06, 0.02, -0.028);
   fShape.closePath();
-  const flukeObj = makeSpineFinMesh(ctx, fShape, xTail + 0.015, 0, 0.0045, 0.0012, (fc) => {
-    fc.fillStyle = TAIL;
-    fc.fillRect(-0.2, -0.18, 0.24, 0.36);
-  }, maxAnisotropy, false, 0.0024);
+  const flukeObj = makeSpineFinMesh(ctx, fShape, -0.24, -0.005, 0.004, 0.001, (fc) => {
+    fc.fillStyle = makeLin(fc, 0, 0.16, -0.18, -0.16, [
+      [0, IND],
+      [0.5, LAV],
+      [1, TAIL],
+    ]);
+    fc.fillRect(-0.24, -0.2, 0.28, 0.4);
+    fc.strokeStyle = rgbaHex(STAR, 0.65);
+    fc.lineWidth = 0.0042;
+    fc.beginPath();
+    fc.moveTo(-0.02, 0.022);
+    fc.quadraticCurveTo(-0.12, 0.08, -0.195, 0.16);
+    fc.moveTo(-0.02, -0.022);
+    fc.quadraticCurveTo(-0.12, -0.08, -0.195, -0.16);
+    fc.stroke();
+  }, maxAnisotropy, false, 0.0011);
   flukeObj.mesh.rotation.x = Math.PI * 0.5;
   tailPivot.add(flukeObj.mesh);
 
-  // Cute Flippers
+  // Rounded Flippers
   const pShape = new THREE.Shape();
-  pShape.moveTo(0, 0.02);
-  pShape.bezierCurveTo(-0.05, 0.032, -0.11, -0.035, -0.125, -0.085);
-  pShape.quadraticCurveTo(-0.05, -0.06, 0, -0.018);
+  pShape.moveTo(0.01, 0.008);
+  pShape.bezierCurveTo(-0.025, -0.055, -0.088, -0.082, -0.112, -0.055);
+  pShape.bezierCurveTo(-0.125, -0.03, -0.072, 0.012, -0.008, 0.014);
   pShape.closePath();
-  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.004, 0.001, (fc) => {
-    fc.fillStyle = FIN;
-    fc.fillRect(-0.16, -0.11, 0.2, 0.16);
-  }, maxAnisotropy, false, 0.0022);
+  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.0034, 0.0008, (fc) => {
+    fc.fillStyle = makeLin(fc, 0, 0.01, -0.11, -0.07, [
+      [0, LAV],
+      [0.65, IND],
+      [1, FIN],
+    ]);
+    fc.fillRect(-0.15, -0.11, 0.18, 0.15);
+    fc.strokeStyle = rgbaHex(STAR, 0.58);
+    fc.lineWidth = 0.0034;
+    fc.beginPath();
+    fc.moveTo(-0.015, -0.045);
+    fc.quadraticCurveTo(-0.065, -0.068, -0.102, -0.052);
+    fc.stroke();
+  }, maxAnisotropy, false, 0.001);
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.05, -0.075, 0.105);
+  pecLeft.position.set(0.055, -0.052, 0.09);
+  pecLeft.rotation.x = 0.28;
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.05, -0.075, -0.105);
+  pecRight.position.set(0.055, -0.052, -0.09);
+  pecRight.rotation.x = -0.28;
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
   const pelvicFin = new THREE.Group();
   bodyGroup.add(pelvicFin);
 
+  const eyeZ = surfaceZAt(evalTop, evalUnifiedBot, (x) => evalZ(x, (x - xTail) / (xSnout - xTail)), 0.202, -0.002);
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
-    ex: 0.19,
-    ey: 0.036,
-    ez: 0.088,
-    er: 0.038,
+    ex: 0.202,
+    ey: -0.002,
+    ez: eyeZ,
+    er: 0.041,
     irisColor: pal.iris || "#1f3a8a",
     rimColor: OL,
+    happyColor: "#ffffff",
   });
 
-  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + hornLen * 0.85, 0.015, SPOT, 0.054);
+  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.14, 0.025, STAR, 0.052);
 
   return {
     speciesKey: sp.id,
-    tailPivotX: xTail + 0.015,
+    tailPivotX: -0.24,
     isFluke: true,
     root,
     pitchGroup,
@@ -825,15 +1147,16 @@ function createNarwhal3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     biteRing,
     biteRingMat,
     uniforms,
-    onCustomPose: (p, open) => {
-      upperJawGroup.rotation.z = open * 0.18;
-      lowerJawGroup.rotation.z = -open * 0.6;
+    onCustomPose: (p, open, swimAmp) => {
+      lowerJawGroup.rotation.z = -open * 0.56;
       mouthInterior.visible = open > 0.03;
       if (open > 0.03) mouthInterior.scale.set(0.85 + open * 0.2, 0.35 + open * 0.9, 0.8 + open * 0.2);
       tongueMesh.visible = open > 0.04;
       tailPivot.rotation.y = 0;
       tailPivot.rotation.z = Math.sin(p.tailPh - 2.3) * (0.34 + p.swimSpeed * 0.22);
       tailPivot.position.y = Math.sin(p.tailPh - 1.6) * 0.018;
+      pecLeft.rotation.z = -0.14 + Math.sin(p.wag2 * 2) * (0.14 + swimAmp * 0.6);
+      pecRight.rotation.z = -0.14 - Math.sin(p.wag2 * 2) * (0.14 + swimAmp * 0.6);
     },
     dispose: () => {
       for (const d of ctx.disposables) d.dispose();
@@ -842,251 +1165,498 @@ function createNarwhal3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 }
 
 // =====================================================================================
-// 4. SEADRAGON (Naga Daun — S-Curved Armored Emerald & Gold Seadragon + 3D Leafy Kelp!)
+// 4. SEADRAGON (Naga Daun — S-Curved Armored Emerald & Gold + Multi-Branch Kelp Plumes)
 // =====================================================================================
 function createSeadragon3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const pal = sp.pal;
   const OL = pal.outline || "#07261c";
-  const EMR = pal.body; // #22b87a
-  const DK = pal.dark; // #0c4a38
-  const GOLD = pal.belly; // #ffe47a
-  const AMBER = pal.fin; // #e6a825
+  const EMR = pal.body || "#22b87a";
+  const DK = pal.dark || "#0c4a38";
+  const GOLD = pal.belly || "#ffe47a";
+  const AMBER = pal.fin || "#e6a825";
   const LEAF = pal.spot || "#9effc6";
+  const TEAL = "#17a89a";
 
   const ctx = createRigContext(OL, "#4e4e4e");
   const { track, uniforms, makeOutlineMat } = ctx;
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
-  const xTail = -0.37;
-  const xNeck = 0.29;
-  const xSnoutTip = 0.455;
+  const sx = (x2: number) => 0.038 + 0.92 * x2;
+  const sy = (y2: number) => -0.01 - 0.92 * y2;
 
-  // Notice: in 2D customFish.ts, y is +down; in 3D, y is +up! (Arch back rises +y at x ≈ 0.04)
-  const topProf: Pt[] = [
-    [xTail, -0.04],
-    [-0.24, 0.015],
-    [-0.1, 0.112],
-    [0.04, 0.138],
-    [0.16, 0.088],
-    [0.245, 0.094], // crowned head
-    [xNeck, 0.052],
-    [0.36, 0.032],
-    [xSnoutTip, 0.028],
-  ];
-  const botProf: Pt[] = [
-    [xTail, -0.056],
-    [-0.24, -0.036],
-    [-0.1, -0.068],
-    [0.04, -0.088],
-    [0.16, -0.064],
-    [0.245, -0.025],
-    [xNeck, -0.004],
-    [0.36, 0.004],
-    [xSnoutTip, 0.002],
-  ];
+  const xTail = sx(-0.378);
+  const xHead = sx(0.285);
+  const hy = sy(-0.012);
+  const xSnout = sx(0.452);
+
+  const topProf = sampleBezierChain(
+    [
+      [[sx(-0.378), sy(0.042)], [sx(-0.295), sy(0.006)], [sx(-0.2), sy(-0.042)], [sx(-0.095), sy(-0.104)]],
+      [[sx(-0.095), sy(-0.104)], [sx(-0.005), sy(-0.146)], [sx(0.085), sy(-0.132)], [sx(0.148), sy(-0.086)]],
+      [[sx(0.148), sy(-0.086)], [sx(0.188), sy(-0.058)], [sx(0.218), sy(-0.098)], [sx(0.272), sy(-0.084)]],
+      [[sx(0.272), sy(-0.084)], [sx(0.308), sy(-0.074)], [sx(0.326), sy(-0.042)], [sx(0.358), sy(-0.032)]],
+      [[sx(0.358), sy(-0.032)], [sx(0.395), sy(-0.024)], [sx(0.428), sy(-0.03)], [xSnout, sy(-0.03)]],
+    ],
+    18
+  );
+  const botProf = sampleBezierChain(
+    [
+      [[sx(-0.378), sy(0.055)], [sx(-0.255), sy(0.016)], [sx(-0.165), sy(0.034)], [sx(-0.052), sy(0.082)]],
+      [[sx(-0.052), sy(0.082)], [sx(0.04), sy(0.094)], [sx(0.095), sy(0.078)], [sx(0.145), sy(0.064)]],
+      [[sx(0.145), sy(0.064)], [sx(0.212), sy(0.056)], [sx(0.252), sy(0.032)], [sx(0.292), sy(0.004)]],
+      [[sx(0.292), sy(0.004)], [sx(0.345), sy(-0.004)], [sx(0.395), sy(-0.006)], [sx(0.444), sy(0)]],
+    ],
+    18
+  );
+
   const evalZ = (x: number, t: number) => {
-    if (x > 0.28) return 0.018;
-    return 0.016 + 0.062 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
+    if (x > sx(0.295)) return 0.015;
+    if (x > sx(0.185)) return 0.034 - ((x - sx(0.185)) / (sx(0.295) - sx(0.185))) * 0.019;
+    return 0.011 + 0.048 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
   };
 
-  // Paint Golden-Armored Bony Rings & Emerald Jewels
+  const { mapUV, beginCanvas2D } = createWorldMapper(xTail - 0.02, xSnout + 0.02, -0.145, 0.145, 512);
   const bodyCv = document.createElement("canvas");
   bodyCv.width = 512;
   bodyCv.height = 512;
   const bc = bodyCv.getContext("2d")!;
-  bc.fillStyle = makeLin(bc, 0, 0, 0, 512, [
+  beginCanvas2D(bc);
+  bc.translate(0.038, 0.01);
+  bc.scale(0.92, 0.92);
+
+  bc.fillStyle = makeLin(bc, 0.02, -0.13, 0.02, 0.095, [
     [0, DK],
-    [0.36, EMR],
-    [0.72, AMBER],
+    [0.32, TEAL],
+    [0.58, EMR],
+    [0.82, AMBER],
     [1, GOLD],
   ]);
-  bc.fillRect(0, 0, 512, 512);
+  bc.fillRect(-0.5, -0.25, 1.1, 0.5);
+  drawGlow(bc, 0.04, -0.078, 0.25, 0.055, -0.06, "220,255,175", 0.3);
 
-  // Sculpted bony golden armor rings
-  bc.strokeStyle = rgbaHex(GOLD, 0.82);
-  bc.lineWidth = 7;
-  for (let i = 0; i < 12; i++) {
-    const rx = 32 + i * 38;
+  // Golden-amber belly keel
+  bc.fillStyle = makeLin(bc, 0.05, 0.005, 0.05, 0.095, [
+    [0, "rgba(255,228,122,0.32)"],
+    [0.55, GOLD],
+    [1, AMBER],
+  ]);
+  bc.beginPath();
+  bc.moveTo(-0.185, 0.016);
+  bc.bezierCurveTo(-0.04, 0.03, 0.11, 0.034, 0.258, 0.004);
+  bc.lineTo(0.255, 0.14);
+  bc.lineTo(-0.22, 0.12);
+  bc.closePath();
+  bc.fill();
+
+  // Turquoise vertical tiger stripes
+  bc.strokeStyle = rgbaHex("#115e59", 0.45);
+  bc.lineWidth = 0.009;
+  for (let i = -3; i <= 2; i++) {
+    const bx = i * 0.054 + 0.01;
     bc.beginPath();
-    bc.moveTo(rx, 0);
-    bc.quadraticCurveTo(rx - 18, 256, rx, 512);
+    bc.moveTo(bx, -0.14);
+    bc.quadraticCurveTo(bx - 0.024, 0, bx + 0.004, 0.1);
     bc.stroke();
   }
-  // Luminous mint-emerald jewel spots along flank armor
-  bc.fillStyle = rgbaHex(LEAF, 0.94);
-  for (let i = 0; i < 7; i++) {
-    drawBlob(bc, 95 + i * 48, 210 + Math.sin(i * 0.7) * 28, 8, 6);
+
+  // Sculpted golden bony armor rings & dark shadow ridges
+  bc.strokeStyle = rgbaHex(GOLD, 0.8);
+  bc.lineWidth = 0.0038;
+  for (let i = -6; i <= 4; i++) {
+    const rx = i * 0.044 - 0.022;
+    bc.beginPath();
+    bc.moveTo(rx, -0.145);
+    bc.quadraticCurveTo(rx - 0.022, 0, rx, 0.1);
+    bc.stroke();
   }
+  bc.strokeStyle = rgbaHex(DK, 0.45);
+  bc.lineWidth = 0.0022;
+  for (let i = -6; i <= 4; i++) {
+    const rx = i * 0.044 - 0.017;
+    bc.beginPath();
+    bc.moveTo(rx, -0.145);
+    bc.quadraticCurveTo(rx - 0.022, 0, rx, 0.1);
+    bc.stroke();
+  }
+
+  // Pipe-snout & curled-tail armor rings
+  bc.strokeStyle = rgbaHex(GOLD, 0.58);
+  bc.lineWidth = 0.0024;
+  for (let i = 0; i < 4; i++) {
+    const rx = 0.318 + i * 0.028;
+    bc.beginPath();
+    bc.moveTo(rx, -0.045);
+    bc.lineTo(rx - 0.004, 0.01);
+    bc.stroke();
+  }
+  for (let i = 0; i < 4; i++) {
+    const tx = -0.24 - i * 0.032;
+    bc.beginPath();
+    bc.moveTo(tx, -0.045);
+    bc.lineTo(tx + 0.004, 0.085);
+    bc.stroke();
+  }
+
+  // 8 Luminous mint jewel spots along flank armor
+  for (const [dx, dy] of [
+    [-0.22, 0.006],
+    [-0.15, -0.028],
+    [-0.09, -0.052],
+    [-0.025, -0.06],
+    [0.04, -0.056],
+    [0.105, -0.04],
+    [0.165, -0.022],
+    [0.295, -0.014],
+  ]) {
+    bc.fillStyle = rgbaHex(LEAF, 0.94);
+    drawBlob(bc, dx, dy, 0.0085, 0.0058, 0.12);
+    bc.fillStyle = "#ffffff";
+    drawBlob(bc, dx - 0.002, dy - 0.0018, 0.003, 0.002, 0.12);
+  }
+  bc.restore();
 
   const bodyTex = track(new THREE.CanvasTexture(bodyCv));
   bodyTex.colorSpace = THREE.SRGBColorSpace;
   bodyTex.anisotropy = maxAnisotropy;
 
-  const mapUV = (x: number, y: number): Pt => [
-    clamp((x - xTail) / (xSnoutTip - xTail), 0.01, 0.99),
-    clamp((y + 0.11) / 0.27, 0.01, 0.99),
-  ];
+  const evalTop = (x: number) => interpCurveY(topProf, x);
+  const evalBot = (x: number) => interpCurveY(botProf, x);
+  const evalUpperPalate = (x: number) => (x > sx(0.38) ? sy(-0.008) : sy(0.002));
+  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, xHead);
+  const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
+  const seadragonMask = bodySpineOutlineMask(
+    evalMidY,
+    [{ x0: sx(0.246), x1: sx(0.295), top: true }],
+    0.016
+  );
 
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: xTail,
-      xEnd: xNeck,
-      uSteps: 40,
+      xEnd: xSnout,
+      uSteps: 52,
       vSteps: 22,
-      evalTopY: (x) => interpCurveY(topProf, x),
-      evalBotY: (x) => interpCurveY(botProf, x),
+      evalTopY: evalTop,
+      evalBotY: evalUnifiedBot,
       evalHalfZ: evalZ,
       mapUV,
-      rearBulge: 0.004,
-      capFront: false,
+      rearBulge: 0.003,
+      roundFront: true,
     })
   );
   const bodyMat = ctx.makeFishMat(bodyTex, { emissiveIntensity: 0.32 });
   injectSpineShader(bodyMat, uniforms, 0, 0);
   bodyGroup.add(
     new THREE.Mesh(bodyGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0045)), makeOutlineMat(0, 0))
+    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.003, seadragonMask)), makeOutlineMat(0, 0))
   );
 
-  // Trumpet Pipe-Snout Upper & Lower Jaws
+  // Pipe-snout Lower Jaw (upper snout unified into cranium)
   const upperJawGroup = new THREE.Group();
-  upperJawGroup.position.set(xNeck, 0.022, 0);
+  upperJawGroup.position.set(xHead, hy + 0.014, 0);
   bodyGroup.add(upperJawGroup);
-  const uGeo = track(
-    buildLoftedSurface({
-      xStart: xNeck - 0.006,
-      xEnd: xSnoutTip,
-      uSteps: 16,
-      vSteps: 16,
-      evalTopY: (x) => interpCurveY(topProf, x),
-      evalBotY: () => 0.008,
-      evalHalfZ: () => 0.017,
-      mapUV,
-      localOffsetX: xNeck,
-      localOffsetY: 0.022,
-      roundFront: true,
-    })
-  );
-  upperJawGroup.add(
-    new THREE.Mesh(uGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(uGeo, 0.0034)), makeOutlineMat(xNeck, 0.022))
-  );
 
   const lowerJawGroup = new THREE.Group();
-  lowerJawGroup.position.set(xNeck, 0.006, 0);
+  lowerJawGroup.position.set(xHead, hy - 0.002, 0);
   bodyGroup.add(lowerJawGroup);
   const lGeo = track(
     buildLoftedSurface({
-      xStart: xNeck - 0.006,
-      xEnd: xSnoutTip - 0.008,
-      uSteps: 14,
+      xStart: xHead - 0.016,
+      xEnd: xSnout - 0.008,
+      uSteps: 18,
       vSteps: 16,
-      evalTopY: () => 0.01,
-      evalBotY: (x) => interpCurveY(botProf, x),
-      evalHalfZ: () => 0.015,
+      evalTopY: () => sy(-0.008),
+      evalBotY: evalBot,
+      evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)) * 0.9,
       mapUV,
-      localOffsetX: xNeck,
-      localOffsetY: 0.006,
+      localOffsetX: xHead,
+      localOffsetY: hy - 0.002,
       roundFront: true,
+      rearInsetAt: (x) => (x < xHead ? smoothstep(xHead - 0.016, xHead + 0.008, x) * 0.92 + 0.08 : 1),
     })
   );
   lowerJawGroup.add(
     new THREE.Mesh(lGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0032)), makeOutlineMat(xNeck, 0.006))
+    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0022, jawOutlineMask(0.006, 0.042))), makeOutlineMat(xHead, hy - 0.002))
   );
 
-  const { mouthInterior, tongueMesh } = createOralParts(ctx, bodyGroup, lowerJawGroup, xNeck + 0.08, 0.014, "#5c1328", "#ff8aa8", [0.022, 0.014, 0.014]);
+  const { mouthInterior, tongueMesh } = createOralParts(
+    ctx,
+    bodyGroup,
+    lowerJawGroup,
+    sx(0.385),
+    sy(-0.008),
+    "#5c1328",
+    "#ff8aa8",
+    [0.02, 0.012, 0.011],
+    [0.014, 0.006, 0.008],
+    0.04
+  );
 
-  // Helper to attach branching 3D Seaweed-Leaf Appendages!
-  const addKelpPlume = (ax: number, ay: number, angle: number, len: number, width: number, flipZ = 0) => {
-    const kShape = new THREE.Shape();
-    kShape.moveTo(0, 0);
-    kShape.bezierCurveTo(-width * 0.9, len * 0.35, width * 1.15, len * 0.65, 0, len);
-    kShape.bezierCurveTo(-width * 0.45, len * 0.72, -width * 1.05, len * 0.35, 0, 0);
-    kShape.closePath();
-    const kObj = makeSpineFinMesh(ctx, kShape, ax, ay, 0.003, 0.0008, (fc) => {
-      fc.fillStyle = makeLin(fc, 0, 0, 0, len, [
-        [0, DK],
-        [0.4, EMR],
-        [0.8, AMBER],
-        [1, LEAF],
-      ]);
-      fc.fillRect(-width * 1.5, -0.02, width * 3, len + 0.04);
-    }, maxAnisotropy, true, 0.0018);
-    kObj.mesh.position.set(ax, ay, flipZ);
-    kObj.mesh.rotation.z = angle;
-    bodyGroup.add(kObj.mesh);
+  // Ruffled 4-scallop kelp leaflet factory (warm & cool variants cached)
+  const buildKelpLeafletPair = (warm: boolean) => {
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    shape.bezierCurveTo(0.16, 0.95, 0.3, 0.45, 0.42, 1.15);
+    shape.bezierCurveTo(0.56, 1.0, 0.65, 0.38, 0.78, 0.85);
+    shape.bezierCurveTo(0.9, 0.46, 0.96, 0.24, 1.0, 0.14);
+    shape.bezierCurveTo(0.95, -0.14, 0.86, -0.64, 0.74, -0.46);
+    shape.bezierCurveTo(0.62, -1.02, 0.5, -0.6, 0.38, -0.98);
+    shape.bezierCurveTo(0.24, -0.62, 0.14, -0.35, 0, -0.003);
+    shape.closePath();
+
+    const { geo, bounds } = createExtrudedFin(shape, 0.016, 0.003, 14);
+    track(geo);
+    const tex = track(
+      makePaintedFinTex(
+        maxAnisotropy,
+        bounds,
+        (fc) => {
+          fc.fillStyle = makeLin(
+            fc,
+            0,
+            0.35,
+            1,
+            -0.25,
+            warm
+              ? [
+                  [0, DK],
+                  [0.28, "#b87a14"],
+                  [0.62, AMBER],
+                  [0.88, GOLD],
+                  [1, "#fff8c4"],
+                ]
+              : [
+                  [0, DK],
+                  [0.32, TEAL],
+                  [0.64, EMR],
+                  [0.88, LEAF],
+                  [1, "#e2fff0"],
+                ]
+          );
+          fc.fillRect(-0.1, -1.25, 1.25, 2.55);
+          fc.strokeStyle = rgbaHex(warm ? "#fff6bd" : GOLD, 0.85);
+          fc.lineWidth = 0.032;
+          fc.beginPath();
+          fc.moveTo(0.01, 0);
+          fc.quadraticCurveTo(0.52, 0.05, 0.92, 0.13);
+          fc.stroke();
+          fc.lineWidth = 0.022;
+          for (const t of [0.32, 0.54, 0.74]) {
+            const vx = t;
+            const vy = t * 0.09;
+            fc.beginPath();
+            fc.moveTo(vx, vy);
+            fc.lineTo(vx + 0.1, vy + 0.62);
+            fc.moveTo(vx, vy);
+            fc.lineTo(vx + 0.09, vy - 0.56);
+            fc.stroke();
+          }
+        },
+        192
+      )
+    );
+    const mat = ctx.makeFishMat(tex, { emissiveIntensity: 0.32 });
+    const olGeo = track(buildOutlineGeometry(geo, 0.014));
+    const olMat = makeOutlineMat(0, 0, false);
+    return { geo, mat, olGeo, olMat };
   };
 
-  // Regal Dorsal, Ventral, Crown & Chin Leafy Kelp Plumes!
-  addKelpPlume(0.02, 0.12, 0.25, 0.21, 0.052, 0.012);
-  addKelpPlume(-0.1, 0.1, 0.52, 0.18, 0.045, -0.012);
-  addKelpPlume(0.14, 0.08, -0.15, 0.16, 0.04, 0);
-  addKelpPlume(0.22, 0.09, -0.25, 0.14, 0.036, 0.01);
-  addKelpPlume(-0.23, 0.02, 0.88, 0.15, 0.038, 0.008);
-  addKelpPlume(0.04, -0.075, Math.PI - 0.32, 0.17, 0.046, 0.014);
-  addKelpPlume(-0.08, -0.06, Math.PI - 0.55, 0.14, 0.038, -0.014);
-  addKelpPlume(0.32, -0.004, Math.PI + 0.18, 0.09, 0.024, 0);
+  const warmLeaf = buildKelpLeafletPair(true);
+  const coolLeaf = buildKelpLeafletPair(false);
+  const stemMat = track(
+    new THREE.MeshPhysicalMaterial({ color: EMR, emissive: EMR, emissiveIntensity: 0.2, roughness: 0.4 })
+  );
+  const amberStemMat = track(
+    new THREE.MeshPhysicalMaterial({ color: AMBER, emissive: AMBER, emissiveIntensity: 0.2, roughness: 0.4 })
+  );
 
-  // Translucent Propulsive Dorsal Propeller Finlet & Tail Curl Leaf
+  const kelpSwayGroups: { g: THREE.Group; baseRot: number; phase: number }[] = [];
+  const addKelpBranch = (
+    ax2: number,
+    ay2: number,
+    ang2: number,
+    len: number,
+    wid: number,
+    warm: boolean,
+    branches: number,
+    zOff: number,
+    phase: number
+  ) => {
+    const g = new THREE.Group();
+    g.position.set(sx(ax2), sy(ay2), zOff);
+    const baseRot = -ang2;
+    g.rotation.z = baseRot;
+    const stemLen = len * 0.29;
+    const sGeo = track(new THREE.CylinderGeometry(0.0022, 0.0028, stemLen, 6));
+    sGeo.rotateZ(-Math.PI * 0.5);
+    sGeo.translate(stemLen * 0.5, 0, 0);
+    const stem = new THREE.Mesh(sGeo, warm ? amberStemMat : stemMat);
+    g.add(stem);
+
+    const tip = new THREE.Group();
+    tip.position.set(stemLen, 0, 0);
+    g.add(tip);
+
+    const addBlade = (rotZ: number, bLen: number, bWid: number, isWarm: boolean) => {
+      const asset = isWarm ? warmLeaf : coolLeaf;
+      const m = new THREE.Mesh(asset.geo, asset.mat);
+      m.scale.set(bLen, bWid, 0.16);
+      m.rotation.z = rotZ;
+      m.add(new THREE.Mesh(asset.olGeo, asset.olMat));
+      tip.add(m);
+    };
+
+    if (branches >= 3) {
+      addBlade(-0.46, len * 0.52, wid * 0.72, !warm);
+      addBlade(0.44, len * 0.55, wid * 0.76, warm);
+    } else if (branches === 2) {
+      addBlade(-0.38, len * 0.54, wid * 0.74, !warm);
+    }
+    addBlade(0, len * 0.78, wid, warm);
+
+    bodyGroup.add(g);
+    kelpSwayGroups.push({ g, baseRot, phase });
+  };
+
+  // Far-side kelp clusters (z < 0)
+  addKelpBranch(-0.14, -0.042, -2.14, 0.165, 0.04, true, 2, -0.022, 0.4);
+  addKelpBranch(0.01, -0.092, -1.78, 0.185, 0.044, false, 2, -0.026, 1.1);
+  addKelpBranch(-0.02, 0.068, 1.98, 0.165, 0.04, true, 2, -0.024, 2.0);
+  addKelpBranch(-0.34, 0.028, 2.75, 0.155, 0.038, false, 2, -0.014, 2.8);
+
+  // Near-side tail, dorsal, belly, chin & crown kelp plumes
+  addKelpBranch(-0.355, 0.022, -2.62, 0.17, 0.042, true, 3, 0.008, 0.2);
+  addKelpBranch(-0.275, 0.008, -2.35, 0.145, 0.036, false, 2, 0.01, 0.9);
+  addKelpBranch(-0.335, 0.048, 2.52, 0.155, 0.038, false, 2, 0.008, 1.7);
+
+  addKelpBranch(-0.155, -0.052, -2.02, 0.175, 0.044, false, 3, 0.018, 0.6);
+  addKelpBranch(-0.032, -0.108, -1.72, 0.21, 0.05, true, 3, 0.022, 1.3);
+  addKelpBranch(0.088, -0.104, -1.48, 0.175, 0.042, false, 3, 0.018, 2.1);
+
+  addKelpBranch(-0.145, 0.028, 2.15, 0.155, 0.038, true, 2, 0.02, 0.8);
+  addKelpBranch(0.0, 0.072, 1.82, 0.18, 0.044, false, 3, 0.022, 1.5);
+  addKelpBranch(0.125, 0.058, 1.48, 0.145, 0.036, true, 2, 0.018, 2.4);
+
+  addKelpBranch(0.318, -0.002, 1.48, 0.085, 0.022, false, 2, 0.006, 0.3);
+  addKelpBranch(0.225, -0.082, -1.96, 0.145, 0.035, true, 3, 0.008, 1.0);
+
+  // Golden-Jade Brow Spine above eye
+  const browShape = new THREE.Shape();
+  browShape.moveTo(sx(0.246), sy(-0.078));
+  browShape.quadraticCurveTo(sx(0.275), sy(-0.124), sx(0.304), sy(-0.126));
+  browShape.quadraticCurveTo(sx(0.288), sy(-0.092), sx(0.28), sy(-0.072));
+  browShape.closePath();
+  bodyGroup.add(
+    makeSpineFinMesh(ctx, browShape, 0, 0, 0.0024, 0.0006, (fc) => {
+      fc.fillStyle = makeLin(fc, sx(0.25), sy(-0.075), sx(0.3), sy(-0.125), [
+        [0, AMBER],
+        [1, "#fff4b3"],
+      ]);
+      fc.fillRect(sx(0.23), sy(-0.065), 0.1, 0.08);
+    }, maxAnisotropy, true, 0.0008, undefined, (x, y) => smoothstep(evalTop(x) - 0.004, evalTop(x) + 0.014, y)).mesh
+  );
+
+  // Translucent Golden-Pearl Dorsal Propeller Finlet
+  const propShape = new THREE.Shape();
+  propShape.moveTo(-0.064, -0.022);
+  propShape.bezierCurveTo(-0.06, 0.068, 0.026, 0.084, 0.062, 0.004);
+  propShape.closePath();
+  const propFin = makeSpineFinMesh(ctx, propShape, sx(-0.125), sy(-0.068), 0.0022, 0.0006, (fc) => {
+    fc.fillStyle = makeLin(fc, -0.05, 0.08, 0.06, -0.01, [
+      [0, "rgba(255,248,185,0.94)"],
+      [0.55, "rgba(230,168,37,0.82)"],
+      [1, "rgba(23,168,154,0.88)"],
+    ]);
+    fc.fillRect(-0.09, -0.04, 0.18, 0.14);
+    fc.strokeStyle = "rgba(255,255,225,0.75)";
+    fc.lineWidth = 0.0022;
+    for (let i = -3; i <= 3; i++) {
+      fc.beginPath();
+      fc.moveTo(i * 0.013, -0.008);
+      fc.lineTo(i * 0.016 - 0.007, 0.062);
+      fc.stroke();
+    }
+  }, maxAnisotropy, true, 0.0008, { transparent: true, opacity: 0.9 });
+  propFin.mesh.position.set(sx(-0.125), sy(-0.068), 0);
+  bodyGroup.add(propFin.mesh);
+
+  // Tail Pivot + tiny curled tip leaf
   const tailPivot = new THREE.Group();
-  tailPivot.position.set(xTail + 0.01, -0.045, 0);
+  tailPivot.position.set(sx(-0.355), sy(0.042), 0);
   bodyGroup.add(tailPivot);
   const tShape = new THREE.Shape();
-  tShape.moveTo(0, 0.016);
-  tShape.bezierCurveTo(-0.06, 0.07, -0.125, 0.06, -0.14, 0);
-  tShape.bezierCurveTo(-0.12, -0.065, -0.055, -0.06, 0, -0.016);
+  tShape.moveTo(0, 0.01);
+  tShape.bezierCurveTo(-0.045, 0.035, -0.095, 0.025, -0.105, 0);
+  tShape.bezierCurveTo(-0.09, -0.032, -0.04, -0.03, 0, -0.01);
   tShape.closePath();
   tailPivot.add(
-    makeSpineFinMesh(ctx, tShape, xTail + 0.01, -0.045, 0.003, 0.0008, (fc) => {
-      fc.fillStyle = makeLin(fc, 0, 0, -0.14, 0, [
+    makeSpineFinMesh(ctx, tShape, sx(-0.355), sy(0.042), 0.0022, 0.0006, (fc) => {
+      fc.fillStyle = makeLin(fc, 0, 0, -0.1, 0, [
         [0, EMR],
         [0.6, GOLD],
         [1, LEAF],
       ]);
-      fc.fillRect(-0.18, -0.1, 0.22, 0.2);
-    }, maxAnisotropy, false, 0.0018).mesh
+      fc.fillRect(-0.14, -0.06, 0.16, 0.12);
+    }, maxAnisotropy, false, 0.0008).mesh
   );
 
   // Gossamer Neck Pectoral Finlets
   const pShape = new THREE.Shape();
-  pShape.moveTo(0, 0.016);
-  pShape.quadraticCurveTo(-0.065, 0.045, -0.085, -0.015);
-  pShape.quadraticCurveTo(-0.045, -0.045, 0, -0.014);
+  pShape.moveTo(0, 0);
+  pShape.bezierCurveTo(-0.024, 0.044, -0.09, 0.024, -0.085, -0.026);
+  pShape.bezierCurveTo(-0.068, -0.066, -0.013, -0.05, 0, -0.013);
   pShape.closePath();
-  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.0028, 0.0008, (fc) => {
-    fc.fillStyle = makeLin(fc, 0, 0, -0.09, 0, [
-      [0, EMR],
-      [0.5, GOLD],
-      [1, "#c3ffe1"],
+  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.0022, 0.0006, (fc) => {
+    fc.fillStyle = makeLin(fc, 0, 0, -0.09, -0.02, [
+      [0, "rgba(34,184,122,0.88)"],
+      [0.52, "rgba(255,228,122,0.92)"],
+      [1, "rgba(195,255,225,0.95)"],
     ]);
-    fc.fillRect(-0.12, -0.08, 0.16, 0.16);
-  }, maxAnisotropy, false, 0.0016, { transparent: true, opacity: 0.9 });
+    fc.fillRect(-0.11, -0.08, 0.13, 0.14);
+    drawFinRays(fc, [-0.005, -0.004], [[-0.07, -0.014], [-0.07, 0], [-0.07, 0.014], [-0.07, -0.028]], "rgba(255,255,255,0.7)", 0.0022);
+  }, maxAnisotropy, false, 0.0008, { transparent: true, opacity: 0.92 });
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.18, 0.02, 0.065);
+  pecLeft.position.set(sx(0.182), sy(-0.014), 0.038);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.18, 0.02, -0.065);
+  pecRight.position.set(sx(0.182), sy(-0.014), -0.038);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
   const pelvicFin = new THREE.Group();
   bodyGroup.add(pelvicFin);
 
+  // Amber-ringed jewel eye
+  const eyeX = sx(0.264);
+  const eyeY = sy(-0.046);
+  const eyeZ = surfaceZAt(evalTop, evalUnifiedBot, (x) => evalZ(x, (x - xTail) / (xSnout - xTail)), eyeX, eyeY);
+  const amberRingGeo = track(new THREE.CylinderGeometry(0.034 * 1.2, 0.034 * 1.2, 0.007, 20));
+  amberRingGeo.rotateX(Math.PI * 0.5);
+  const amberRingMat = track(
+    new THREE.MeshPhysicalMaterial({ color: GOLD, emissive: AMBER, emissiveIntensity: 0.25, roughness: 0.28 })
+  );
+  for (const s of [1, -1]) {
+    const r = new THREE.Mesh(amberRingGeo, amberRingMat);
+    r.position.set(eyeX, eyeY, s * (eyeZ - 0.001));
+    r.rotation.y = s * 0.18;
+    bodyGroup.add(r);
+  }
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
-    ex: 0.264,
-    ey: 0.048,
-    ez: 0.056,
-    er: 0.036,
+    ex: eyeX,
+    ey: eyeY,
+    ez: eyeZ + 0.002,
+    er: 0.034,
     irisColor: pal.iris || "#ff6b35",
-    rimColor: GOLD,
+    rimColor: OL,
+    happyColor: GOLD,
   });
 
-  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnoutTip + 0.02, 0.016, LEAF, 0.048);
+  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.018, sy(-0.012), LEAF, 0.044);
 
   return {
     speciesKey: sp.id,
-    tailPivotX: xTail + 0.01,
+    tailPivotX: sx(-0.355),
     root,
     pitchGroup,
     yawGroup,
@@ -1105,6 +1675,16 @@ function createSeadragon3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     biteRing,
     biteRingMat,
     uniforms,
+    onCustomPose: (p, open, swimAmp) => {
+      lowerJawGroup.rotation.z = -open * 0.52;
+      mouthInterior.visible = open > 0.03;
+      if (open > 0.03) mouthInterior.scale.set(0.85 + open * 0.2, 0.35 + open * 0.9, 0.8 + open * 0.2);
+      tongueMesh.visible = open > 0.04;
+      for (const k of kelpSwayGroups) {
+        k.g.rotation.z = k.baseRot + Math.sin(p.wag2 * 1.4 + k.phase) * (0.11 + swimAmp * 0.35);
+      }
+      propFin.mesh.rotation.y = Math.sin(p.wag2 * 3) * 0.22;
+    },
     dispose: () => {
       for (const d of ctx.disposables) d.dispose();
     },
@@ -1112,248 +1692,318 @@ function createSeadragon3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 }
 
 // =====================================================================================
-// 5. AXOLOTL (Mochi — Chibi Sakura-Pink Salamander, 3x2 Feathered Gills, 4 Paddle Feet!)
+// 5. AXOLOTL (Mochi — Chibi Sakura Salamander, 3x2 Feathered Gills, 4 3-Toed Feet!)
 // =====================================================================================
 function createAxolotl3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const pal = sp.pal;
   const OL = pal.outline || "#4d1234";
-  const PINK = pal.body; // #ffb6d9
-  const DK = pal.dark; // #db5c98
-  const BELLY = pal.belly; // #fff2f9
-  const GILL = pal.fin; // #ff3f82
+  const PINK = pal.body || "#ffb6d9";
+  const DK = pal.dark || "#db5c98";
+  const BELLY = pal.belly || "#fff2f9";
+  const GILL = pal.fin || "#ff3f82";
   const CRYS = pal.spot || "#6ef7ff";
 
   const ctx = createRigContext(OL, "#464646");
   const { track, uniforms, makeOutlineMat } = ctx;
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
-  const xTail = -0.27;
-  const xHead = 0.14;
-  const xSnout = 0.34;
+  const xTail = -0.205;
+  const xHead = 0.178;
+  const hy = -0.038;
+  const xSnout = 0.354;
 
-  const topProf: Pt[] = [
-    [xTail, 0.045],
-    [-0.14, 0.11],
-    [0.02, 0.135],
-    [xHead, 0.142],
-    [0.25, 0.138],
-    [0.31, 0.092],
-    [xSnout, 0.016],
-  ];
-  const botProf: Pt[] = [
-    [xTail, -0.042],
-    [-0.14, -0.105],
-    [0.02, -0.132],
-    [xHead, -0.132],
-    [0.25, -0.118],
-    [0.31, -0.075],
-    [xSnout, -0.016],
-  ];
+  const topProf = sampleBezierChain(
+    [
+      [[-0.205, 0.022], [-0.105, 0.076], [0.055, 0.096], [0.178, 0.104]],
+      [[0.178, 0.104], [0.278, 0.112], [0.33, 0.062], [xSnout, -0.02]],
+    ],
+    22
+  );
+  const botProf = sampleBezierChain(
+    [
+      [[-0.205, -0.022], [-0.09, -0.078], [0.052, -0.106], [0.175, -0.094]],
+      [[0.175, -0.094], [0.288, -0.088], [0.322, -0.05], [0.338, -0.036]],
+    ],
+    22
+  );
   const evalZ = (x: number, t: number) => {
-    const base = 0.032 + 0.108 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
-    return x > 0.16 ? 0.145 * clamp(1 - (x - 0.24) / 0.14, 0.45, 1) : base; // broad cute rounded salamander head!
+    const base = 0.026 + 0.088 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
+    return x > 0.16 ? 0.124 * clamp(1 - Math.max(0, x - 0.24) / 0.135, 0.44, 1) : base;
   };
 
-  // Paint Sakura-Pink Body + Rosy Cheeks + Crystal Sparkle Dots
+  const { mapUV, beginCanvas2D } = createWorldMapper(-0.22, 0.37, -0.125, 0.125, 512);
   const bodyCv = document.createElement("canvas");
   bodyCv.width = 512;
   bodyCv.height = 512;
   const bc = bodyCv.getContext("2d")!;
-  bc.fillStyle = makeLin(bc, 0, 0, 0, 512, [
+  beginCanvas2D(bc);
+  bc.fillStyle = makeLin(bc, 0.06, -0.108, 0.06, 0.105, [
     [0, DK],
-    [0.34, PINK],
-    [0.72, BELLY],
-    [1, BELLY],
+    [0.32, PINK],
+    [0.74, BELLY],
+    [1, "#ffe8f5"],
   ]);
-  bc.fillRect(0, 0, 512, 512);
+  bc.fillRect(-0.32, -0.22, 0.78, 0.44);
+  drawGlow(bc, 0.08, -0.058, 0.21, 0.045, 0, "255,255,255", 0.36);
 
-  // Rosy blushing cheeks
-  drawGlow(bc, 395, 290, 42, 30, 0, "255,75,140", 0.55);
-  // Sparkling cyan crystal dots along flanks
-  bc.fillStyle = rgbaHex(CRYS, 0.92);
-  for (const [sx, sy] of [[120, 195], [180, 165], [245, 200], [160, 260], [295, 185]]) {
-    drawBlob(bc, sx, sy, 9, 9);
-  }
+  drawStar4Canvas(bc, 0.06, -0.042, 0.013, CRYS);
+  drawStar4Canvas(bc, -0.03, -0.026, 0.015, CRYS);
+  drawStar4Canvas(bc, -0.115, -0.012, 0.012, CRYS);
+  bc.fillStyle = rgbaHex(CRYS, 0.85);
+  drawBlob(bc, 0.015, 0.026, 0.009, 0.0065, 0);
+
+  // Rosy cheek blush + twin white shine slashes
+  bc.fillStyle = rgbaHex(GILL, 0.46);
+  drawBlob(bc, 0.232, 0.034, 0.028, 0.016, 0.08);
+  bc.strokeStyle = "rgba(255,255,255,0.68)";
+  bc.lineWidth = 0.0024;
+  bc.beginPath();
+  bc.moveTo(0.222, 0.032);
+  bc.lineTo(0.227, 0.026);
+  bc.moveTo(0.232, 0.034);
+  bc.lineTo(0.237, 0.028);
+  bc.stroke();
+  bc.restore();
 
   const bodyTex = track(new THREE.CanvasTexture(bodyCv));
   bodyTex.colorSpace = THREE.SRGBColorSpace;
   bodyTex.anisotropy = maxAnisotropy;
 
-  const mapUV = (x: number, y: number): Pt => [
-    clamp((x - xTail) / (xSnout - xTail), 0.01, 0.99),
-    clamp((y + 0.16) / 0.32, 0.01, 0.99),
-  ];
+  const evalTop = (x: number) => interpCurveY(topProf, x);
+  const evalBot = (x: number) => interpCurveY(botProf, x);
+  const evalUpperPalate = () => -0.032;
+  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, xHead);
 
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: xTail,
-      xEnd: xHead,
-      uSteps: 34,
+      xEnd: xSnout,
+      uSteps: 44,
       vSteps: 26,
-      evalTopY: (x) => interpCurveY(topProf, x),
-      evalBotY: (x) => interpCurveY(botProf, x),
+      evalTopY: evalTop,
+      evalBotY: evalUnifiedBot,
       evalHalfZ: evalZ,
       mapUV,
-      rearBulge: 0.005,
-      capFront: false,
+      rearBulge: 0.004,
+      roundFront: true,
     })
   );
   const bodyMat = ctx.makeFishMat(bodyTex, { emissiveIntensity: 0.3 });
   injectSpineShader(bodyMat, uniforms, 0, 0);
   bodyGroup.add(
     new THREE.Mesh(bodyGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.005)), makeOutlineMat(0, 0))
+    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0036)), makeOutlineMat(0, 0))
   );
 
-  // Broad Rounded Head & Jaws
+  // Broad Rounded Head Lower Jaw (upper cranium unified cleanly into body)
   const upperJawGroup = new THREE.Group();
-  upperJawGroup.position.set(xHead, 0.006, 0);
+  upperJawGroup.position.set(xHead, hy + 0.012, 0);
   bodyGroup.add(upperJawGroup);
-  const uGeo = track(
-    buildLoftedSurface({
-      xStart: xHead - 0.01,
-      xEnd: xSnout,
-      uSteps: 16,
-      vSteps: 20,
-      evalTopY: (x) => interpCurveY(topProf, x),
-      evalBotY: () => -0.008,
-      evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)),
-      mapUV,
-      localOffsetX: xHead,
-      localOffsetY: 0.006,
-      roundFront: true,
-    })
-  );
-  upperJawGroup.add(
-    new THREE.Mesh(uGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(uGeo, 0.0044)), makeOutlineMat(xHead, 0.006))
-  );
 
   const lowerJawGroup = new THREE.Group();
-  lowerJawGroup.position.set(xHead, -0.014, 0);
+  lowerJawGroup.position.set(xHead, hy - 0.01, 0);
   bodyGroup.add(lowerJawGroup);
   const lGeo = track(
     buildLoftedSurface({
-      xStart: xHead - 0.01,
-      xEnd: xSnout - 0.008,
-      uSteps: 14,
+      xStart: xHead - 0.018,
+      xEnd: xSnout - 0.014,
+      uSteps: 16,
       vSteps: 18,
-      evalTopY: () => 0.004,
-      evalBotY: (x) => interpCurveY(botProf, x),
-      evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)) * 0.92,
+      evalTopY: () => -0.03,
+      evalBotY: evalBot,
+      evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)) * 0.9,
       mapUV,
       localOffsetX: xHead,
-      localOffsetY: -0.014,
+      localOffsetY: hy - 0.01,
       roundFront: true,
+      rearInsetAt: (x) => (x < xHead ? smoothstep(xHead - 0.018, xHead + 0.008, x) * 0.92 + 0.08 : 1),
     })
   );
   lowerJawGroup.add(
     new THREE.Mesh(lGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0044)), makeOutlineMat(xHead, -0.014))
+    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0032, jawOutlineMask(0.006, 0.042))), makeOutlineMat(xHead, hy - 0.01))
   );
 
-  const { mouthInterior, tongueMesh } = createOralParts(ctx, bodyGroup, lowerJawGroup, xHead + 0.015, -0.006);
-
-  // 3 PAIRS of Fluffy Feathered Coral-Magenta External Gills!
-  const gillMat = track(
-    new THREE.MeshPhysicalMaterial({
-      color: GILL,
-      emissive: GILL,
-      emissiveIntensity: 0.28,
-      roughness: 0.32,
-    })
+  const { mouthInterior, tongueMesh } = createOralParts(
+    ctx,
+    bodyGroup,
+    lowerJawGroup,
+    xHead + 0.02,
+    hy,
+    "#7a1440",
+    "#ff78aa",
+    [0.034, 0.024, 0.028],
+    [0.024, 0.009, 0.015],
+    0.035
   );
-  const gillStalkGeo = track(new THREE.CapsuleGeometry(0.011, 0.115, 6, 10));
-  const gillFrondGeo = track(new THREE.SphereGeometry(0.014, 8, 8));
-  const gillBranches: THREE.Group[] = [];
-  for (const s of [1, -1]) {
-    for (let gi = 0; gi < 3; gi++) {
-      const gg = new THREE.Group();
-      gg.position.set(0.145 - gi * 0.014, 0.055 - gi * 0.042, s * 0.125);
-      const stalk = new THREE.Mesh(gillStalkGeo, gillMat);
-      stalk.rotation.x = s * (Math.PI * 0.44);
-      stalk.rotation.z = 0.22 - gi * 0.28;
-      stalk.position.set(-0.025, 0.015 - gi * 0.008, s * 0.055);
-      gg.add(stalk);
-      // Fluffy gill fronds
-      for (let fi = 0; fi < 3; fi++) {
-        const frond = new THREE.Mesh(gillFrondGeo, gillMat);
-        frond.position.set(-0.02 - fi * 0.012, 0.025 - gi * 0.01 + (fi % 2) * 0.012, s * (0.04 + fi * 0.026));
-        gg.add(frond);
-      }
-      bodyGroup.add(gg);
-      gillBranches.push(gg);
+
+  // 3 PAIRS of Truly Feathered Coral-Magenta External Gills!
+  const makeFeatheredGillObj = (len: number) => {
+    const gShape = new THREE.Shape();
+    gShape.moveTo(0, -0.012);
+    const nPinnae = 5;
+    for (let i = 1; i <= nPinnae; i++) {
+      const t = i / (nPinnae + 0.7);
+      const bx = len * t;
+      const fl = len * (0.28 + Math.sin(t * Math.PI) * 0.14);
+      gShape.lineTo(bx - 0.005, -0.012);
+      gShape.lineTo(bx - fl * 0.38, -fl * 0.86);
+      gShape.lineTo(bx + 0.007, -0.01);
     }
+    gShape.lineTo(len * 1.04, 0);
+    for (let i = nPinnae; i >= 1; i--) {
+      const t = i / (nPinnae + 0.7);
+      const bx = len * t;
+      const fl = len * (0.28 + Math.sin(t * Math.PI) * 0.14);
+      gShape.lineTo(bx + 0.007, 0.01);
+      gShape.lineTo(bx - fl * 0.38, fl * 0.86);
+      gShape.lineTo(bx - 0.005, 0.012);
+    }
+    gShape.lineTo(0, 0.012);
+    gShape.closePath();
+
+    return makeSpineFinMesh(ctx, gShape, 0, 0, 0.0024, 0.0005, (fc) => {
+      fc.fillStyle = makeLin(fc, 0, 0, len, 0, [
+        [0, PINK],
+        [0.42, GILL],
+        [0.82, "#ff8fc0"],
+        [1, "#ffd9ec"],
+      ]);
+      fc.fillRect(-0.02, -len * 0.55, len * 1.15, len * 1.1);
+      fc.strokeStyle = rgbaHex(CRYS, 0.72);
+      fc.lineWidth = 0.0024;
+      fc.beginPath();
+      fc.moveTo(0.01, 0);
+      fc.lineTo(len * 0.85, 0);
+      fc.stroke();
+    }, maxAnisotropy, false, 0.0008);
+  };
+
+  const gillConfigs: [number, number, number, number][] = [
+    [0.148, 0.054, 2.06, 0.128],
+    [0.14, 0.02, 2.42, 0.142],
+    [0.138, -0.018, 2.82, 0.124],
+  ];
+  const gillMeshes: { mesh: THREE.Object3D; baseRotY: number; phase: number }[] = [];
+  for (const s of [1, -1]) {
+    gillConfigs.forEach(([gx, gy, rotZ, gLen], gi) => {
+      const obj = makeFeatheredGillObj(gLen);
+      const gg = new THREE.Group();
+      gg.position.set(gx, gy, s * 0.095);
+      gg.rotation.z = rotZ;
+      const baseRotY = s * -0.42;
+      gg.rotation.y = baseRotY;
+      gg.add(obj.mesh);
+      bodyGroup.add(gg);
+      gillMeshes.push({ mesh: gg, baseRotY, phase: gi * 0.55 });
+    });
   }
 
-  // 4 Cute Stubby Salamander Paddle Feet!
-  const limbGeo = track(new THREE.CapsuleGeometry(0.022, 0.055, 6, 10));
-  const limbMat = track(
-    new THREE.MeshPhysicalMaterial({
-      color: PINK,
-      emissive: PINK,
-      emissiveIntensity: 0.24,
-      roughness: 0.35,
-    })
-  );
-  const feet: { g: THREE.Group; phase: number }[] = [];
-  for (const [fx, fy, fz, ph] of [
-    [0.06, -0.1, 0.095, 0],
-    [0.06, -0.1, -0.095, Math.PI],
-    [-0.14, -0.09, 0.085, Math.PI],
-    [-0.14, -0.09, -0.085, 0],
+  // 4 Cute 3-Toed Paddle Feet!
+  const footShape = new THREE.Shape();
+  footShape.moveTo(-0.014, 0.008);
+  footShape.bezierCurveTo(-0.018, -0.032, -0.034, -0.058, -0.022, -0.068);
+  footShape.quadraticCurveTo(-0.01, -0.078, -0.002, -0.065);
+  footShape.quadraticCurveTo(0.008, -0.076, 0.016, -0.064);
+  footShape.quadraticCurveTo(0.026, -0.07, 0.024, -0.052);
+  footShape.bezierCurveTo(0.022, -0.03, 0.012, -0.008, 0.01, 0.008);
+  footShape.closePath();
+  const footAsset = makeSpineFinMesh(ctx, footShape, 0, 0, 0.005, 0.0012, (fc) => {
+    fc.fillStyle = makeLin(fc, 0, 0.01, 0, -0.07, [
+      [0, PINK],
+      [0.75, BELLY],
+      [1, "#ffe3f2"],
+    ]);
+    fc.fillRect(-0.05, -0.1, 0.1, 0.14);
+  }, maxAnisotropy, false, 0.001);
+
+  const feet: { g: THREE.Group; baseRotZ: number; phase: number }[] = [];
+  for (const [fx, fy, fz, baseRotZ, ph] of [
+    [0.088, -0.058, 0.082, -0.36, 0],
+    [0.088, -0.058, -0.082, -0.36, Math.PI],
+    [-0.095, -0.048, 0.074, -0.72, Math.PI],
+    [-0.095, -0.048, -0.074, -0.72, 0],
   ] as const) {
     const fg = new THREE.Group();
     fg.position.set(fx, fy, fz);
-    const fm = new THREE.Mesh(limbGeo, limbMat);
-    fm.position.set(0, -0.025, fz > 0 ? 0.012 : -0.012);
-    fm.rotation.x = fz > 0 ? 0.35 : -0.35;
-    fm.add(new THREE.Mesh(track(buildOutlineGeometry(limbGeo, 0.003)), makeOutlineMat(0, 0, false)));
+    fg.rotation.z = baseRotZ;
+    fg.rotation.x = fz > 0 ? 0.34 : -0.34;
+    const fm = feesClone(footAsset.mesh);
     fg.add(fm);
     bodyGroup.add(fg);
-    feet.push({ g: fg, phase: ph });
+    feet.push({ g: fg, baseRotZ, phase: ph });
+  }
+  function feesClone(m: THREE.Mesh) {
+    return m === footAsset.mesh && feet.length === 0 ? m : m.clone();
   }
 
-  // Sparkling Translucent Crystal Ribbon Tail!
+  // Sparkling Translucent Crystal-Faceted Ribbon Tail
   const tailPivot = new THREE.Group();
-  tailPivot.position.set(xTail + 0.015, 0, 0);
+  tailPivot.position.set(-0.145, 0, 0);
   bodyGroup.add(tailPivot);
   const tShape = new THREE.Shape();
-  tShape.moveTo(0, 0.055);
-  tShape.bezierCurveTo(-0.08, 0.145, -0.2, 0.125, -0.25, 0.025);
-  tShape.quadraticCurveTo(-0.27, 0, -0.25, -0.025);
-  tShape.bezierCurveTo(-0.2, -0.12, -0.08, -0.135, 0, -0.05);
+  tShape.moveTo(0.155, 0.078);
+  tShape.bezierCurveTo(0.02, 0.155, -0.175, 0.165, -0.275, 0.035);
+  tShape.bezierCurveTo(-0.305, -0.005, -0.295, -0.055, -0.255, -0.085);
+  tShape.bezierCurveTo(-0.165, -0.135, -0.025, -0.095, 0.055, -0.036);
   tShape.closePath();
   tailPivot.add(
-    makeSpineFinMesh(ctx, tShape, xTail + 0.015, 0, 0.004, 0.001, (fc) => {
-      fc.fillStyle = makeLin(fc, 0, 0, -0.26, 0, [
-        [0, PINK],
-        [0.55, BELLY],
-        [1, CRYS],
+    makeSpineFinMesh(ctx, tShape, -0.145, 0, 0.0032, 0.0008, (fc) => {
+      fc.fillStyle = makeLin(fc, 0.08, 0.12, -0.28, -0.07, [
+        [0, "rgba(255,182,217,0.88)"],
+        [0.42, "rgba(255,110,175,0.7)"],
+        [0.78, "rgba(110,247,255,0.8)"],
+        [1, "rgba(218,252,255,0.94)"],
       ]);
-      fc.fillRect(-0.3, -0.18, 0.34, 0.36);
-    }, maxAnisotropy, false, 0.0024, { transparent: true, opacity: 0.9, emissiveIntensity: 0.36 }).mesh
+      fc.fillRect(-0.33, -0.16, 0.52, 0.35);
+      // Prism crystal facets
+      fc.fillStyle = "rgba(255,255,255,0.34)";
+      fc.beginPath();
+      fc.moveTo(-0.08, 0.11);
+      fc.lineTo(-0.16, 0.04);
+      fc.lineTo(-0.22, 0.09);
+      fc.closePath();
+      fc.fill();
+      fc.fillStyle = "rgba(110,247,255,0.42)";
+      fc.beginPath();
+      fc.moveTo(-0.18, -0.01);
+      fc.lineTo(-0.26, -0.04);
+      fc.lineTo(-0.21, -0.09);
+      fc.closePath();
+      fc.fill();
+      // Iridescent aqua rim
+      fc.strokeStyle = rgbaHex(CRYS, 0.88);
+      fc.lineWidth = 0.008;
+      fc.beginPath();
+      fc.moveTo(-0.05, 0.125);
+      fc.bezierCurveTo(-0.18, 0.135, -0.28, 0.04, -0.25, -0.075);
+      fc.stroke();
+      drawStar4Canvas(fc, -0.11, 0.075, 0.016, CRYS);
+      drawStar4Canvas(fc, -0.21, 0.015, 0.018, "#ffffff");
+      drawStar4Canvas(fc, -0.16, -0.055, 0.014, CRYS);
+    }, maxAnisotropy, false, 0.0009, { transparent: true, opacity: 0.9, emissiveIntensity: 0.36 }).mesh
   );
 
   const pecLeft = new THREE.Group();
   const pecRight = new THREE.Group();
   const pelvicFin = new THREE.Group();
 
+  const eyeZ = surfaceZAt(evalTop, evalUnifiedBot, (x) => evalZ(x, (x - xTail) / (xSnout - xTail)), 0.252, 0.032);
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
-    ex: 0.255,
-    ey: 0.036,
-    ez: 0.105,
-    er: 0.038,
+    ex: 0.252,
+    ey: 0.032,
+    ez: eyeZ,
+    er: 0.04,
     irisColor: pal.iris || "#28143b",
-    rimColor: "#ffffff",
-    happyColor: OL,
+    rimColor: OL,
+    happyColor: GILL,
   });
 
-  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.02, 0, CRYS, 0.052);
+  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.02, -0.02, CRYS, 0.05);
 
   return {
     speciesKey: sp.id,
-    tailPivotX: xTail + 0.015,
+    tailPivotX: -0.145,
     skipDefaultFins: true,
     root,
     pitchGroup,
@@ -1374,16 +2024,15 @@ function createAxolotl3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     biteRingMat,
     uniforms,
     onCustomPose: (p, open) => {
-      upperJawGroup.rotation.z = open * 0.22;
-      lowerJawGroup.rotation.z = -open * 0.65;
+      lowerJawGroup.rotation.z = -open * 0.62;
       mouthInterior.visible = open > 0.03;
       if (open > 0.03) mouthInterior.scale.set(0.85 + open * 0.2, 0.35 + open * 0.9, 0.8 + open * 0.2);
       tongueMesh.visible = open > 0.04;
       for (const f of feet) {
-        f.g.rotation.z = Math.sin(p.tailPh + f.phase) * 0.48;
+        f.g.rotation.z = f.baseRotZ + Math.sin(p.tailPh + f.phase) * 0.32;
       }
-      for (let i = 0; i < gillBranches.length; i++) {
-        gillBranches[i].rotation.y = Math.sin(p.wag2 + i * 0.6) * 0.12;
+      for (const gm of gillMeshes) {
+        gm.mesh.rotation.y = gm.baseRotY + Math.sin(p.wag2 + gm.phase) * 0.12;
       }
     },
     dispose: () => {
@@ -1393,247 +2042,361 @@ function createAxolotl3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 }
 
 // =====================================================================================
-// 6. WHALESHARK (Astro — Midnight-Navy Gentle Giant, Glowing Star Constellations!)
+// 6. WHALESHARK (Astro — Midnight-Navy Gentle Giant, Star Constellations & Fixed Dorsal!)
 // =====================================================================================
 function createWhaleshark3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const pal = sp.pal;
   const OL = pal.outline || "#050d24";
-  const B = pal.body; // #163a7a
-  const D = pal.dark; // #0a1a42
-  const BEL = pal.belly; // #e8f6ff
-  const FIN = pal.fin;
+  const NAVY = pal.body || "#163a7a";
+  const DK = pal.dark || "#0a1a42";
+  const BELLY = pal.belly || "#e8f6ff";
+  const FIN = pal.fin || "#1d4b96";
   const TAIL = pal.tail || "#13346e";
-  const STR = pal.stripe || "#5ce6ff"; // constellation connecting lines
-  const STAR = pal.spot || "#fff4b8"; // golden stars
+  const CYAN = pal.stripe || "#5ce6ff";
+  const STAR = pal.spot || "#fff4b8";
 
   const ctx = createRigContext(OL, "#4a4a4a");
   const { track, uniforms, makeOutlineMat } = ctx;
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
-  const xTail = -0.37;
-  const xHead = 0.21;
-  const xSnout = 0.39;
+  const xTail = -0.232;
+  const xHead = 0.242;
+  const hy = -0.034;
+  const xSnout = 0.392;
 
-  const topProf: Pt[] = [
-    [xTail, 0.032],
-    [-0.24, 0.095],
-    [-0.06, 0.175],
-    [0.12, 0.185],
-    [xHead, 0.16],
-    [0.32, 0.115], // broad flat blunt whaleshark snout!
-    [xSnout, 0.032],
-  ];
-  const botProf: Pt[] = [
-    [xTail, -0.03],
-    [-0.24, -0.088],
-    [-0.06, -0.155],
-    [0.12, -0.16],
-    [xHead, -0.14],
-    [0.32, -0.095],
-    [xSnout - 0.01, -0.025],
-  ];
+  const topProf = sampleBezierChain(
+    [
+      [[-0.232, 0.022], [-0.122, 0.096], [0.068, 0.125], [0.242, 0.106]],
+      [[0.242, 0.106], [0.338, 0.095], [0.388, 0.052], [xSnout, -0.008]],
+    ],
+    22
+  );
+  const botProf = sampleBezierChain(
+    [
+      [[-0.232, -0.022], [-0.108, -0.068], [0.052, -0.108], [0.195, -0.092]],
+      [[0.195, -0.092], [0.326, -0.082], [0.358, -0.038], [0.376, -0.026]],
+    ],
+    22
+  );
   const evalZ = (x: number, t: number) => {
-    const base = 0.024 + 0.125 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
-    return x > 0.24 ? Math.max(0.068, base * 0.85) : base; // broad squared front!
+    const base = 0.024 + 0.108 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
+    return x > 0.24 ? Math.max(0.056, base * 0.88) : base;
   };
 
-  // Paint Midnight Navy + Star-Constellation Grid + Pearl Belly + 5 Gill Slits
+  const { mapUV, beginCanvas2D } = createWorldMapper(-0.25, 0.41, -0.135, 0.135, 512);
   const bodyCv = document.createElement("canvas");
   bodyCv.width = 512;
   bodyCv.height = 512;
   const bc = bodyCv.getContext("2d")!;
-  bc.fillStyle = makeLin(bc, 0, 0, 0, 512, [
-    [0, D],
-    [0.45, B],
-    [0.64, mixHex(B, BEL, 0.65)],
-    [0.75, BEL],
-    [1, BEL],
+  beginCanvas2D(bc);
+  bc.fillStyle = makeLin(bc, 0.05, -0.118, 0.05, 0.106, [
+    [0, DK],
+    [0.44, NAVY],
+    [0.68, "#2255a6"],
+    [0.73, BELLY],
+    [1, "#cbe7ff"],
   ]);
-  bc.fillRect(0, 0, 512, 512);
+  bc.fillRect(-0.35, -0.25, 0.9, 0.5);
+  drawGlow(bc, 0.08, -0.07, 0.24, 0.048, -0.04, "125,240,255", 0.26);
 
-  // Star-Constellation lines & glowing golden stars!
-  const stars: [number, number][] = [
-    [95, 110], [155, 85], [215, 115], [275, 82], [335, 108],
-    [125, 175], [190, 165], [250, 185], [310, 162], [365, 145],
-  ];
-  bc.strokeStyle = rgbaHex(STR, 0.56);
-  bc.lineWidth = 4;
-  bc.beginPath();
-  for (let i = 0; i < 4; i++) {
-    bc.moveTo(stars[i][0], stars[i][1]);
-    bc.lineTo(stars[i + 1][0], stars[i + 1][1]);
-    bc.moveTo(stars[i][0], stars[i][1]);
-    bc.lineTo(stars[i + 5][0], stars[i + 5][1]);
-  }
-  bc.stroke();
-  for (const [sx, sy] of stars) {
-    drawGlow(bc, sx, sy, 18, 18, 0, "255,244,184", 0.52);
-    bc.fillStyle = STAR;
-    drawBlob(bc, sx, sy, 7.5, 7.5);
-  }
-
-  // 5 Gill Slits
-  bc.strokeStyle = rgbaHex(OL, 0.72);
-  bc.lineWidth = 5;
-  for (let i = 0; i < 5; i++) {
-    const gx = 328 + i * 14;
+  // Faint celestial checkerboard bands
+  bc.strokeStyle = rgbaHex(CYAN, 0.28);
+  bc.lineWidth = 0.0038;
+  for (let i = -3; i <= 3; i++) {
+    const bx = i * 0.052 + 0.025;
     bc.beginPath();
-    bc.arc(gx, 285, 36, -0.55, 0.55);
+    bc.moveTo(bx, -0.125);
+    bc.quadraticCurveTo(bx - 0.008, -0.048, bx, 0.015);
     bc.stroke();
   }
+  // Longitudinal dermal ridge
+  bc.strokeStyle = rgbaHex(CYAN, 0.28);
+  bc.lineWidth = 0.003;
+  bc.beginPath();
+  bc.moveTo(-0.21, -0.008);
+  bc.quadraticCurveTo(0, -0.025, 0.19, -0.018);
+  bc.stroke();
+
+  // Star Constellation Network
+  const nodes: [number, number, number][] = [
+    [0.245, -0.066, 0.011],
+    [0.185, -0.042, 0.009],
+    [0.128, -0.075, 0.013],
+    [0.068, -0.036, 0.01],
+    [0.012, -0.072, 0.012],
+    [-0.048, -0.034, 0.01],
+    [-0.105, -0.058, 0.012],
+    [-0.162, -0.022, 0.009],
+  ];
+  const edges: [number, number][] = [
+    [0, 1],
+    [1, 2],
+    [2, 3],
+    [3, 4],
+    [4, 5],
+    [5, 6],
+    [6, 7],
+    [2, 4],
+  ];
+  bc.strokeStyle = rgbaHex(CYAN, 0.65);
+  bc.lineWidth = 0.0028;
+  bc.beginPath();
+  for (const [a, b] of edges) {
+    bc.moveTo(nodes[a][0], nodes[a][1]);
+    bc.lineTo(nodes[b][0], nodes[b][1]);
+  }
+  bc.stroke();
+  for (const [sx, sy, sr] of nodes) {
+    drawStar4Canvas(bc, sx, sy, sr, STAR, rgbaHex(CYAN, 0.34));
+  }
+  bc.fillStyle = rgbaHex(STAR, 0.88);
+  for (const [dx, dy, dr] of [
+    [0.285, -0.052, 0.0048],
+    [0.155, -0.008, 0.0045],
+    [0.042, -0.005, 0.0045],
+    [-0.075, -0.004, 0.0045],
+    [0.095, -0.088, 0.0048],
+  ]) {
+    bc.beginPath();
+    bc.arc(dx, dy, dr, 0, Math.PI * 2);
+    bc.fill();
+  }
+
+  // 5 distinct whale-shark gill slits
+  bc.strokeStyle = rgbaHex(DK, 0.8);
+  bc.lineWidth = 0.0042;
+  for (let g = 0; g < 5; g++) {
+    const gx = 0.142 + g * 0.014;
+    bc.beginPath();
+    bc.moveTo(gx, -0.024);
+    bc.quadraticCurveTo(gx - 0.004, 0.006, gx, 0.036);
+    bc.stroke();
+  }
+  bc.restore();
 
   const bodyTex = track(new THREE.CanvasTexture(bodyCv));
   bodyTex.colorSpace = THREE.SRGBColorSpace;
   bodyTex.anisotropy = maxAnisotropy;
 
-  const mapUV = (x: number, y: number): Pt => [
-    clamp((x - xTail) / (xSnout - xTail), 0.01, 0.99),
-    clamp((y + 0.2) / 0.4, 0.01, 0.99),
-  ];
+  const evalTop = (x: number) => interpCurveY(topProf, x);
+  const evalBot = (x: number) => interpCurveY(botProf, x);
+  const evalUpperPalate = () => -0.028;
+  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, xHead);
+  const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
+  const whalesharkMask = bodySpineOutlineMask(
+    evalMidY,
+    [
+      { x0: -0.058, x1: 0.078, top: true },
+      { x0: -0.19, x1: -0.126, top: true },
+      { x0: -0.18, x1: -0.124, top: false },
+    ],
+    0.026
+  );
 
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: xTail,
-      xEnd: xHead,
-      uSteps: 36,
+      xEnd: xSnout,
+      uSteps: 44,
       vSteps: 26,
-      evalTopY: (x) => interpCurveY(topProf, x),
-      evalBotY: (x) => interpCurveY(botProf, x),
+      evalTopY: evalTop,
+      evalBotY: evalUnifiedBot,
       evalHalfZ: evalZ,
       mapUV,
-      rearBulge: 0.005,
-      capFront: false,
+      rearBulge: 0.004,
+      roundFront: true,
     })
   );
-  const bodyMat = ctx.makeFishMat(bodyTex, { emissiveIntensity: 0.34 });
+  const bodyMat = ctx.makeFishMat(bodyTex, { emissiveIntensity: 0.32 });
   injectSpineShader(bodyMat, uniforms, 0, 0);
   bodyGroup.add(
     new THREE.Mesh(bodyGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0055)), makeOutlineMat(0, 0))
+    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.004, whalesharkMask)), makeOutlineMat(0, 0))
   );
 
-  // Broad Flat-Snouted Jaws
+  // Broad Flat-Snouted Lower Jaw (upper snout unified into cranium)
   const upperJawGroup = new THREE.Group();
-  upperJawGroup.position.set(xHead, 0.008, 0);
+  upperJawGroup.position.set(xHead, hy + 0.014, 0);
   bodyGroup.add(upperJawGroup);
-  const uGeo = track(
-    buildLoftedSurface({
-      xStart: xHead - 0.01,
-      xEnd: xSnout,
-      uSteps: 16,
-      vSteps: 18,
-      evalTopY: (x) => interpCurveY(topProf, x),
-      evalBotY: () => -0.014,
-      evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)),
-      mapUV,
-      localOffsetX: xHead,
-      localOffsetY: 0.008,
-      roundFront: true,
-    })
-  );
-  upperJawGroup.add(
-    new THREE.Mesh(uGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(uGeo, 0.0045)), makeOutlineMat(xHead, 0.008))
-  );
 
   const lowerJawGroup = new THREE.Group();
-  lowerJawGroup.position.set(xHead, -0.016, 0);
+  lowerJawGroup.position.set(xHead, hy - 0.01, 0);
   bodyGroup.add(lowerJawGroup);
   const lGeo = track(
     buildLoftedSurface({
-      xStart: xHead - 0.01,
-      xEnd: xSnout - 0.01,
-      uSteps: 16,
+      xStart: xHead - 0.018,
+      xEnd: xSnout - 0.016,
+      uSteps: 18,
       vSteps: 18,
-      evalTopY: () => 0.004,
-      evalBotY: (x) => interpCurveY(botProf, x),
-      evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)) * 0.94,
+      evalTopY: () => -0.026,
+      evalBotY: evalBot,
+      evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)) * 0.92,
       mapUV,
       localOffsetX: xHead,
-      localOffsetY: -0.016,
+      localOffsetY: hy - 0.01,
       roundFront: true,
+      rearInsetAt: (x) => (x < xHead ? smoothstep(xHead - 0.018, xHead + 0.008, x) * 0.92 + 0.08 : 1),
     })
   );
   lowerJawGroup.add(
     new THREE.Mesh(lGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0045)), makeOutlineMat(xHead, -0.016))
+    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0034, jawOutlineMask(0.006, 0.042))), makeOutlineMat(xHead, hy - 0.01))
   );
 
-  const { mouthInterior, tongueMesh } = createOralParts(ctx, bodyGroup, lowerJawGroup, xHead + 0.018, -0.006, "#401228", "#ff8aa8", [0.045, 0.032, 0.048]);
-
-  // Grand Crescent Tail with Star Spots
-  const tailPivot = new THREE.Group();
-  tailPivot.position.set(xTail + 0.014, 0, 0);
-  bodyGroup.add(tailPivot);
-  const tShape = new THREE.Shape();
-  tShape.moveTo(0, 0.034);
-  tShape.bezierCurveTo(-0.085, 0.145, -0.175, 0.215, -0.22, 0.23);
-  tShape.bezierCurveTo(-0.155, 0.115, -0.105, 0.04, -0.095, 0);
-  tShape.bezierCurveTo(-0.11, -0.045, -0.15, -0.115, -0.185, -0.165);
-  tShape.quadraticCurveTo(-0.085, -0.105, 0, -0.03);
-  tShape.closePath();
-  tailPivot.add(
-    makeSpineFinMesh(ctx, tShape, xTail + 0.014, 0, 0.0045, 0.0012, (fc) => {
-      fc.fillStyle = TAIL;
-      fc.fillRect(-0.26, -0.22, 0.3, 0.5);
-      fc.fillStyle = STAR;
-      drawBlob(fc, -0.08, 0.08, 0.012, 0.012);
-      drawBlob(fc, -0.14, 0.15, 0.01, 0.01);
-    }, maxAnisotropy, false, 0.0026).mesh
+  const { mouthInterior, tongueMesh } = createOralParts(
+    ctx,
+    bodyGroup,
+    lowerJawGroup,
+    xHead + 0.022,
+    hy,
+    "#17254a",
+    "#4874b8",
+    [0.044, 0.032, 0.048],
+    [0.028, 0.011, 0.02],
+    0.038
   );
 
-  // Rounded Tall Dorsal & Majestic Wide Pectoral Wings
+  // FIXED BACKWARD-SWEPT Primary Dorsal Fin (leading convex edge on +X snout side, leaning back toward -X!)
   const dShape = new THREE.Shape();
-  dShape.moveTo(-0.06, 0.155);
-  dShape.bezierCurveTo(-0.02, 0.32, 0.04, 0.325, 0.08, 0.295);
-  dShape.quadraticCurveTo(0.085, 0.2, 0.105, 0.165);
+  dShape.moveTo(0.078, 0.094);
+  dShape.bezierCurveTo(0.052, 0.188, 0.006, 0.238, -0.046, 0.224);
+  dShape.bezierCurveTo(-0.062, 0.175, -0.058, 0.125, -0.048, 0.088);
   dShape.closePath();
   bodyGroup.add(
-    makeSpineFinMesh(ctx, dShape, 0, 0, 0.0045, 0.0012, (fc) => {
-      fc.fillStyle = FIN;
-      fc.fillRect(-0.1, 0.12, 0.24, 0.24);
-      fc.fillStyle = STAR;
-      drawBlob(fc, 0.02, 0.24, 0.012, 0.012);
-    }, maxAnisotropy, true, 0.0026).mesh
+    makeSpineFinMesh(ctx, dShape, 0, 0, 0.0036, 0.0009, (fc) => {
+      fc.fillStyle = makeLin(fc, 0.01, 0.24, 0.01, 0.09, [
+        [0, CYAN],
+        [0.24, FIN],
+        [0.75, NAVY],
+        [1, DK],
+      ]);
+      fc.fillRect(-0.09, 0.06, 0.2, 0.2);
+      fc.strokeStyle = rgbaHex(CYAN, 0.68);
+      fc.lineWidth = 0.0042;
+      fc.beginPath();
+      fc.moveTo(0.035, 0.175);
+      fc.quadraticCurveTo(0, 0.232, -0.042, 0.214);
+      fc.stroke();
+      drawStar4Canvas(fc, -0.002, 0.168, 0.011, STAR, rgbaHex(CYAN, 0.32));
+      drawStar4Canvas(fc, 0.014, 0.132, 0.0095, STAR, rgbaHex(CYAN, 0.32));
+    }, maxAnisotropy, true, 0.0011, undefined, (x, y) => smoothstep(evalTop(x) - 0.006, evalTop(x) + 0.016, y)).mesh
   );
 
+  // 2nd Dorsal & Pale Anal Fin (also leaning backward -X)
+  const d2Shape = new THREE.Shape();
+  d2Shape.moveTo(-0.126, 0.054);
+  d2Shape.bezierCurveTo(-0.146, 0.106, -0.174, 0.106, -0.19, 0.09);
+  d2Shape.quadraticCurveTo(-0.186, 0.058, -0.184, 0.036);
+  d2Shape.closePath();
+  bodyGroup.add(
+    makeSpineFinMesh(ctx, d2Shape, 0, 0, 0.003, 0.0008, (fc) => {
+      fc.fillStyle = FIN;
+      fc.fillRect(-0.22, 0.01, 0.12, 0.12);
+    }, maxAnisotropy, true, 0.0009, undefined, (x, y) => smoothstep(evalTop(x) - 0.006, evalTop(x) + 0.014, y)).mesh
+  );
+
+  const aShape = new THREE.Shape();
+  aShape.moveTo(-0.124, -0.046);
+  aShape.bezierCurveTo(-0.142, -0.092, -0.168, -0.09, -0.18, -0.076);
+  aShape.quadraticCurveTo(-0.178, -0.05, -0.174, -0.032);
+  aShape.closePath();
+  bodyGroup.add(
+    makeSpineFinMesh(ctx, aShape, 0, 0, 0.0028, 0.0007, (fc) => {
+      fc.fillStyle = BELLY;
+      fc.fillRect(-0.21, -0.12, 0.12, 0.11);
+    }, maxAnisotropy, true, 0.0009, undefined, (x, y) => smoothstep(evalBot(x) + 0.006, evalBot(x) - 0.014, y)).mesh
+  );
+
+  // Grand Crescent Whale-Shark Tail
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(-0.225, 0, 0);
+  bodyGroup.add(tailPivot);
+  const tShape = new THREE.Shape();
+  tShape.moveTo(0.018, 0.024);
+  tShape.bezierCurveTo(-0.075, 0.125, -0.165, 0.22, -0.232, 0.225);
+  tShape.bezierCurveTo(-0.182, 0.115, -0.145, 0.032, -0.145, 0);
+  tShape.bezierCurveTo(-0.145, -0.03, -0.165, -0.095, -0.195, -0.165);
+  tShape.bezierCurveTo(-0.122, -0.135, -0.052, -0.072, 0.018, -0.024);
+  tShape.closePath();
+  tailPivot.add(
+    makeSpineFinMesh(ctx, tShape, -0.225, 0, 0.0036, 0.0009, (fc) => {
+      fc.fillStyle = makeLin(fc, 0, 0.21, -0.21, -0.15, [
+        [0, DK],
+        [0.48, NAVY],
+        [1, TAIL],
+      ]);
+      fc.fillRect(-0.26, -0.2, 0.3, 0.46);
+      fc.strokeStyle = rgbaHex(CYAN, 0.56);
+      fc.lineWidth = 0.0045;
+      fc.beginPath();
+      fc.moveTo(-0.218, 0.205);
+      fc.quadraticCurveTo(-0.155, 0.08, -0.148, 0);
+      fc.stroke();
+      drawStar4Canvas(fc, -0.13, 0.105, 0.012, STAR, rgbaHex(CYAN, 0.34));
+      drawStar4Canvas(fc, -0.172, 0.152, 0.011, STAR, rgbaHex(CYAN, 0.34));
+      fc.fillStyle = rgbaHex(STAR, 0.85);
+      drawBlob(fc, -0.14, -0.078, 0.0065, 0.0055, 0);
+    }, maxAnisotropy, false, 0.0011).mesh
+  );
+
+  // Majestic Sweeping Pectoral Wings
   const pShape = new THREE.Shape();
-  pShape.moveTo(0, 0.026);
-  pShape.bezierCurveTo(-0.065, 0.045, -0.17, -0.06, -0.19, -0.125);
-  pShape.quadraticCurveTo(-0.08, -0.09, 0, -0.022);
+  pShape.moveTo(0.015, 0.008);
+  pShape.bezierCurveTo(-0.005, -0.068, -0.105, -0.165, -0.175, -0.155);
+  pShape.bezierCurveTo(-0.155, -0.092, -0.092, -0.025, -0.035, 0.016);
   pShape.closePath();
-  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.0042, 0.001, (fc) => {
-    fc.fillStyle = FIN;
-    fc.fillRect(-0.24, -0.16, 0.28, 0.24);
-    fc.fillStyle = STAR;
-    drawBlob(fc, -0.09, -0.04, 0.012, 0.012);
-    drawBlob(fc, -0.13, -0.08, 0.01, 0.01);
-  }, maxAnisotropy, false, 0.0024);
+  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.0034, 0.0008, (fc) => {
+    fc.fillStyle = makeLin(fc, 0.01, 0.01, -0.16, -0.15, [
+      [0, DK],
+      [0.4, NAVY],
+      [0.75, FIN],
+      [1, CYAN],
+    ]);
+    fc.fillRect(-0.21, -0.19, 0.26, 0.24);
+    fc.strokeStyle = rgbaHex(CYAN, 0.7);
+    fc.lineWidth = 0.0045;
+    fc.beginPath();
+    fc.moveTo(0.002, -0.018);
+    fc.bezierCurveTo(-0.028, -0.085, -0.108, -0.15, -0.165, -0.145);
+    fc.stroke();
+    fc.strokeStyle = rgbaHex(CYAN, 0.52);
+    fc.lineWidth = 0.0024;
+    fc.beginPath();
+    fc.moveTo(-0.068, -0.062);
+    fc.lineTo(-0.118, -0.105);
+    fc.stroke();
+    drawStar4Canvas(fc, -0.068, -0.062, 0.011, STAR, rgbaHex(CYAN, 0.34));
+    drawStar4Canvas(fc, -0.118, -0.105, 0.01, STAR, rgbaHex(CYAN, 0.34));
+  }, maxAnisotropy, false, 0.0011);
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.085, -0.075, 0.118);
+  pecLeft.position.set(0.118, -0.044, 0.092);
+  pecLeft.rotation.x = 0.34;
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.085, -0.075, -0.118);
+  pecRight.position.set(0.118, -0.044, -0.092);
+  pecRight.rotation.x = -0.34;
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
   const pelvicFin = new THREE.Group();
   bodyGroup.add(pelvicFin);
 
+  const eyeZ = surfaceZAt(evalTop, evalUnifiedBot, (x) => evalZ(x, (x - xTail) / (xSnout - xTail)), 0.288, 0.026);
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
-    ex: 0.295,
+    ex: 0.288,
     ey: 0.026,
-    ez: 0.088,
-    er: 0.036,
+    ez: eyeZ,
+    er: 0.034,
     irisColor: pal.iris || "#38bdf8",
-    rimColor: STAR,
+    rimColor: OL,
+    happyColor: "#ffffff",
   });
 
-  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.025, 0, STR, 0.056);
+  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.025, -0.012, CYAN, 0.056);
 
   return {
     speciesKey: sp.id,
-    tailPivotX: xTail + 0.014,
+    tailPivotX: -0.225,
     root,
     pitchGroup,
     yawGroup,

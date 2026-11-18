@@ -30,6 +30,82 @@ export type Pt = [number, number];
 
 export const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 
+export function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+export function jawOutlineMask(xHide = 0.008, xFull = 0.044): (x: number, y: number, z: number) => number {
+  return (x: number) => smoothstep(xHide, xFull, x);
+}
+
+export function finRootMaskY(yRoot: number, fadeSpan: number, isTop = true): (x: number, y: number, z: number) => number {
+  return isTop
+    ? (_x: number, y: number) => smoothstep(yRoot, yRoot + fadeSpan, y)
+    : (_x: number, y: number) => smoothstep(yRoot, yRoot - fadeSpan, y);
+}
+
+export interface SpineSocketSpan {
+  x0: number;
+  x1: number;
+  top: boolean;
+}
+
+export function bodySpineOutlineMask(
+  evalMidY: (x: number) => number,
+  spans: SpineSocketSpan[],
+  zRadius = 0.03
+): (x: number, y: number, z: number) => number {
+  return (x: number, y: number, z: number) => {
+    const absZ = Math.abs(z);
+    if (absZ >= zRadius) return 1;
+    const zFade = smoothstep(0.006, zRadius, absZ);
+    const mid = evalMidY(x);
+    let hide = 0;
+    for (const s of spans) {
+      if (s.top ? y <= mid : y >= mid) continue;
+      const xMask = smoothstep(s.x0 - 0.006, s.x0 + 0.016, x) * (1 - smoothstep(s.x1 - 0.016, s.x1 + 0.006, x));
+      if (xMask > hide) hide = xMask;
+    }
+    return 1 - hide * (1 - zFade);
+  };
+}
+
+export function blendBotToPalate(
+  botFn: (x: number) => number,
+  palateFn: (x: number) => number,
+  hx: number,
+  blendBack = 0.032,
+  blendFwd = 0.014
+): (x: number) => number {
+  return (x: number) => {
+    if (x <= hx - blendBack) return botFn(x);
+    if (x >= hx + blendFwd) return palateFn(x);
+    const k = smoothstep(hx - blendBack, hx + blendFwd, x);
+    const b = botFn(x);
+    const p = palateFn(x);
+    return b + (p - b) * k;
+  };
+}
+
+export function surfaceZAt(
+  evalTop: (x: number) => number,
+  evalBot: (x: number) => number,
+  evalHalfZ: (x: number) => number,
+  ex: number,
+  ey: number,
+  taperPow = 0.22,
+  inset = 0.96
+): number {
+  const yt = evalTop(ex);
+  const yb = evalBot(ex);
+  const ym = (yt + yb) * 0.5;
+  const hh = Math.max(0.008, (yt - yb) * 0.5);
+  const s = clamp((ey - ym) / hh, -0.92, 0.92);
+  const c = Math.sqrt(Math.max(0.06, 1 - s * s));
+  return evalHalfZ(ex) * c * (1 - taperPow * s * s) * inset;
+}
+
 export interface Fish3DRig extends Boris3DRig {
   speciesKey: string;
   tailPivotX: number;
@@ -95,6 +171,50 @@ export function drawGlow(
   c.arc(0, 0, rx, 0, Math.PI * 2);
   c.fill();
   c.restore();
+}
+
+export function sampleBezierChain(segs: [Pt, Pt, Pt, Pt][], stepsPerSeg = 26): Pt[] {
+  const pts: Pt[] = [];
+  segs.forEach((s, idx) => {
+    for (let i = idx === 0 ? 0 : 1; i <= stepsPerSeg; i++) {
+      pts.push(cubicPt(s[0], s[1], s[2], s[3], i / stepsPerSeg));
+    }
+  });
+  return pts;
+}
+
+export function createWorldMapper(minX: number, maxX: number, minY3: number, maxY3: number, size = 512) {
+  const spanX = Math.max(1e-4, maxX - minX);
+  const spanY = Math.max(1e-4, maxY3 - minY3);
+  const mapUV = (x: number, y3: number): Pt => [
+    clamp((x - minX) / spanX, 0.002, 0.998),
+    clamp((y3 - minY3) / spanY, 0.002, 0.998),
+  ];
+  const beginCanvas2D = (c: CanvasRenderingContext2D, offset2DX = 0, offset2DY = 0) => {
+    c.save();
+    c.translate((-minX / spanX) * size, (maxY3 / spanY) * size);
+    c.scale(size / spanX, size / spanY);
+    if (offset2DX !== 0 || offset2DY !== 0) c.translate(offset2DX, offset2DY);
+  };
+  return { mapUV, beginCanvas2D };
+}
+
+export function drawFinRays(
+  fc: CanvasRenderingContext2D,
+  origin: Pt,
+  tips: Pt[],
+  color: string,
+  lineWidth = 0.0042
+) {
+  fc.strokeStyle = color;
+  fc.lineWidth = lineWidth;
+  fc.lineCap = "round";
+  for (const [tx, ty] of tips) {
+    fc.beginPath();
+    fc.moveTo(origin[0], origin[1]);
+    fc.lineTo(tx, ty);
+    fc.stroke();
+  }
 }
 
 // ---------- Shared Lofted 3D Geometry Builders (verified +Z outward winding!) ----------
@@ -374,8 +494,8 @@ export function createEyePair(
 
   const scleraGeo = track(new THREE.SphereGeometry(er, 18, 12));
   scleraGeo.scale(sx, sy, 0.32);
-  const rimGeo = track(new THREE.SphereGeometry(er * 1.11, 18, 12));
-  rimGeo.scale(sx, sy, 0.26);
+  const rimGeo = track(new THREE.SphereGeometry(er * 1.032, 18, 12));
+  rimGeo.scale(sx, sy, 0.24);
   const irisGeo = track(new THREE.SphereGeometry(er * 0.58, 16, 10));
   irisGeo.scale(sx, sy, 0.28);
   const pupilGeo = track(new THREE.SphereGeometry(er * 0.36, 14, 10));
@@ -389,13 +509,13 @@ export function createEyePair(
     new THREE.Vector3(er * 0.3, er * 0.36, er * 0.09),
     new THREE.Vector3(er * 0.72, -er * 0.18, 0),
   ]);
-  const happyGeo = track(new THREE.TubeGeometry(happyCurve, 12, Math.max(0.0028, er * 0.15), 8, false));
+  const happyGeo = track(new THREE.TubeGeometry(happyCurve, 12, Math.max(0.0022, er * 0.11), 8, false));
 
   let lidGeo: THREE.BufferGeometry | null = null;
   let lidMat: THREE.MeshPhysicalMaterial | null = null;
   if (opts.lidColor) {
-    lidGeo = track(new THREE.SphereGeometry(er * 1.15, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.42));
-    lidGeo.scale(sx * 1.04, sy * 0.96, 0.36);
+    lidGeo = track(new THREE.SphereGeometry(er * 1.055, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.42));
+    lidGeo.scale(sx * 1.01, sy * 0.96, 0.34);
     lidMat = track(
       new THREE.MeshPhysicalMaterial({
         color: opts.lidColor,
@@ -419,14 +539,14 @@ export function createEyePair(
 
     const normalEye = new THREE.Group();
     if (opts.orcaDotOnly) {
-      const darkBall = new THREE.Mesh(rimGeo, pupilMat);
+      const darkBall = new THREE.Mesh(scleraGeo, pupilMat);
       const gl = new THREE.Mesh(glint1Geo, glintMat);
       gl.position.set(er * 0.24, er * 0.24, side * er * 0.3);
       normalEye.add(darkBall, gl);
       eyesPupil.push(darkBall);
     } else {
       const rim = new THREE.Mesh(rimGeo, rimMat);
-      rim.position.z = -side * 0.0012;
+      rim.position.z = -side * 0.0005;
       const sclera = new THREE.Mesh(scleraGeo, scleraMat);
       const iris = new THREE.Mesh(irisGeo, irisMat);
       iris.position.set(er * 0.18, er * 0.03, side * er * 0.21);
@@ -589,7 +709,8 @@ export function makeSpineFinMesh(
   maxAnisotropy: number,
   useSpine = true,
   outlineSize = 0.0028,
-  extraMat?: Partial<THREE.MeshPhysicalMaterialParameters>
+  extraMat?: Partial<THREE.MeshPhysicalMaterialParameters>,
+  outlineMask?: (x: number, y: number, z: number) => number
 ) {
   const { geo, bounds } = createExtrudedFin(shape, depth, bevel, 16);
   ctx.track(geo);
@@ -598,7 +719,7 @@ export function makeSpineFinMesh(
   if (useSpine) injectSpineShader(mat, ctx.uniforms, offsetX, offsetY);
   const mesh = new THREE.Mesh(geo, mat);
   if (outlineSize > 0) {
-    const olGeo = ctx.track(buildOutlineGeometry(geo, outlineSize));
+    const olGeo = ctx.track(buildOutlineGeometry(geo, outlineSize, outlineMask));
     const olMesh = new THREE.Mesh(olGeo, ctx.makeOutlineMat(offsetX, offsetY, useSpine));
     mesh.add(olMesh);
   }

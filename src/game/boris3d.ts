@@ -194,9 +194,14 @@ function mapWorldUV(x: number, y: number): [number, number] {
   return [clamp((x - -0.3) / 0.7, 0, 1), clamp((y - -0.28) / 0.56, 0, 1)];
 }
 
-// Sculpted main torso from rear peduncle (-0.236) seamlessly up to cheek/hinge (HX = 0.262)
+function smoothstepLocal(edge0: number, edge1: number, x: number): number {
+  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+// Sculpted continuous body + cranium + upper snout from rear peduncle (-0.236) to UX_TIP
 function buildBorisBodyGeometry(): THREE.BufferGeometry {
-  const uSteps = 44;
+  const uSteps = 56;
   const vSteps = 32;
   const positions: number[] = [];
   const uvs: number[] = [];
@@ -204,15 +209,34 @@ function buildBorisBodyGeometry(): THREE.BufferGeometry {
   const ringCols = vSteps + 1;
 
   const xStart = -0.236;
-  const xEnd = HX + 0.002;
+  const xEnd = UX_TIP;
+
+  const evalUnifiedBotY = (x: number): number => {
+    if (x <= HX - 0.032) return interpCurveY(CURVE_SAMPLES.bot, x);
+    if (x >= HX + 0.014) return evalMouthSeamY(x);
+    const k = smoothstepLocal(HX - 0.032, HX + 0.014, x);
+    const b = interpCurveY(CURVE_SAMPLES.bot, x);
+    const p = evalMouthSeamY(x);
+    return b + (p - b) * k;
+  };
 
   for (let i = 0; i <= uSteps; i++) {
     const t = i / uSteps;
     const x = xStart + (xEnd - xStart) * t;
-    const yTop = interpCurveY(CURVE_SAMPLES.top, x);
-    const yBot = interpCurveY(CURVE_SAMPLES.bot, x);
+    let yTop = interpCurveY(CURVE_SAMPLES.top, x);
+    let yBot = evalUnifiedBotY(x);
+
+    if (t > 0.85) {
+      const tipK = (t - 0.85) / 0.15;
+      const mid = (yTop + yBot) * 0.5;
+      const shrink = Math.sqrt(Math.max(0.04, 1 - tipK * tipK * 0.92));
+      const half = Math.max(0.002, (yTop - yBot) * 0.5 * shrink);
+      yTop = mid + half;
+      yBot = mid - half;
+    }
+
     const yMid = (yTop + yBot) * 0.5;
-    const halfH = Math.max(0.012, (yTop - yBot) * 0.5);
+    const halfH = Math.max(0.0025, (yTop - yBot) * 0.5);
     const halfZ = evalBodyHalfZ(x);
 
     // Subtle rounded rear butt bulge matching drawBoris (-0.242 curve)
@@ -257,13 +281,13 @@ function buildBorisBodyGeometry(): THREE.BufferGeometry {
     indices.push(backCenter, j, j + 1);
   }
 
-  // Cap front cheek behind jaw hinge (normal +X outward)
+  // Cap front snout tip (normal +X outward)
   const frontRingStart = uSteps * ringCols;
   const frontCenter = positions.length / 3;
   const yt1 = interpCurveY(CURVE_SAMPLES.top, xEnd);
-  const yb1 = interpCurveY(CURVE_SAMPLES.bot, xEnd);
+  const yb1 = evalMouthSeamY(xEnd);
   const ym1 = (yt1 + yb1) * 0.5;
-  positions.push(xEnd + 0.001, ym1, 0);
+  positions.push(xEnd + 0.002, ym1, 0);
   const [fu, fv] = mapWorldUV(xEnd, ym1);
   uvs.push(fu, fv);
   for (let j = 0; j < vSteps; j++) {
@@ -278,7 +302,7 @@ function buildBorisBodyGeometry(): THREE.BufferGeometry {
   return geo;
 }
 
-// Sculpted upper snout or lower jaw mesh matching EXACT drawBoris bezier curves & flank UVs
+// Sculpted lower jaw mesh matching EXACT drawBoris bezier curves & flank UVs
 function buildBorisJawPartGeometry(part: "upper" | "lower"): THREE.BufferGeometry {
   const uSteps = 18;
   const vSteps = 24;
@@ -392,17 +416,21 @@ function buildBorisJawPartGeometry(part: "upper" | "lower"): THREE.BufferGeometr
 }
 
 // Create inverted-hull outline geometry extruded cleanly along smoothed vertex normals
-export function buildOutlineGeometry(srcGeo: THREE.BufferGeometry, thickness: number): THREE.BufferGeometry {
+export function buildOutlineGeometry(
+  srcGeo: THREE.BufferGeometry,
+  thickness: number,
+  maskFn?: (x: number, y: number, z: number) => number
+): THREE.BufferGeometry {
   const geo = srcGeo.clone();
   const pos = geo.attributes.position;
   const norm = geo.attributes.normal;
   for (let i = 0; i < pos.count; i++) {
-    pos.setXYZ(
-      i,
-      pos.getX(i) + norm.getX(i) * thickness,
-      pos.getY(i) + norm.getY(i) * thickness,
-      pos.getZ(i) + norm.getZ(i) * thickness
-    );
+    const px = pos.getX(i);
+    const py = pos.getY(i);
+    const pz = pos.getZ(i);
+    const m = maskFn ? maskFn(px, py, pz) : 1;
+    const t = thickness * m;
+    pos.setXYZ(i, px + norm.getX(i) * t, py + norm.getY(i) * t, pz + norm.getZ(i) * t);
   }
   pos.needsUpdate = true;
   return geo;
@@ -800,9 +828,10 @@ export function injectSpineShader(
         transformed.z += bendT * (sWave + uBend * 0.22);
         if (uGulpT > 0.01 && uGulpK > 0.001) {
           float gt = clamp(uGulpT, 0.0, 1.0);
-          float gx = mix(0.18, -0.14, 1.0 - gt);
-          float gd = (wx - gx) / 0.095;
-          float bulge = exp(-gd * gd) * uGulpK * sin(gt * 3.14159265) * 0.28;
+          float gx = mix(0.08, -0.14, 1.0 - gt);
+          float gd = (wx - gx) / 0.085;
+          float torsoMask = smoothstep(0.17, 0.04, wx);
+          float bulge = exp(-gd * gd) * torsoMask * uGulpK * sin(gt * 3.14159265) * 0.28;
           transformed.y *= (1.0 + bulge * 0.65);
           transformed.z *= (1.0 + bulge * 1.15);
         }
@@ -811,9 +840,7 @@ export function injectSpineShader(
           float cheekPuff = exp(-pd * pd) * uPuff * 0.022;
           transformed.y -= cheekPuff * 0.55;
           transformed.z += sign(transformed.z + 0.0001) * cheekPuff * 0.85;
-        }
-        transformed.x *= (1.0 - uSquash * 0.24);
-        transformed.y *= (1.0 + uSquash * 0.30);`
+        }`
       );
   };
 }
@@ -1004,7 +1031,21 @@ export function createBoris3DRig(maxAnisotropy = 4): Boris3DRig {
   const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
   bodyGroup.add(bodyMesh);
 
-  const bodyOutlineGeo = track(buildOutlineGeometry(bodyGeo, 0.0052));
+  const bodyOutlineGeo = track(
+    buildOutlineGeometry(bodyGeo, 0.0052, (x, y, z) => {
+      const absZ = Math.abs(z);
+      if (absZ >= 0.028) return 1;
+      const zFade = smoothstepLocal(0.006, 0.028, absZ);
+      const midY = (interpCurveY(CURVE_SAMPLES.top, x) + interpCurveY(CURVE_SAMPLES.bot, x)) * 0.5;
+      let hide = 0;
+      if (y > midY) {
+        hide = smoothstepLocal(-0.25, -0.22, x) * (1 - smoothstepLocal(0.11, 0.14, x));
+      } else {
+        hide = smoothstepLocal(-0.27, -0.24, x) * (1 - smoothstepLocal(-0.08, -0.05, x));
+      }
+      return 1 - hide * (1 - zFade);
+    })
+  );
   const bodyOutlineMesh = new THREE.Mesh(bodyOutlineGeo, makeOutlineMat());
   bodyGroup.add(bodyOutlineMesh);
 
@@ -1033,19 +1074,10 @@ export function createBoris3DRig(maxAnisotropy = 4): Boris3DRig {
   const tailMesh = new THREE.Mesh(tailGeo, tailMat);
   tailPivot.add(tailMesh);
 
-  // 4. Sculpted Seamless Upper Snout & Lower Jaw (exact bezier profile — ZERO primitive sphere/capsule blobs!)
+  // 4. Unified Cranium & Snout in bodyGeo + Articulated Tucked Lower Jaw (zero cheek seam!)
   const upperJawGroup = new THREE.Group();
   upperJawGroup.position.set(HX, HY, 0);
   bodyGroup.add(upperJawGroup);
-
-  const upperJawGeo = track(buildBorisJawPartGeometry("upper"));
-  const upperJawMat = makeFishMat(albedo);
-  injectSpineShader(upperJawMat, uniforms, HX, HY);
-  const upperJawMesh = new THREE.Mesh(upperJawGeo, upperJawMat);
-  upperJawGroup.add(upperJawMesh);
-
-  const upperJawOutlineGeo = track(buildOutlineGeometry(upperJawGeo, 0.0048));
-  upperJawGroup.add(new THREE.Mesh(upperJawOutlineGeo, makeOutlineMat(HX, HY)));
 
   const lowerJawGroup = new THREE.Group();
   lowerJawGroup.position.set(HX, HY, 0);
@@ -1057,7 +1089,9 @@ export function createBoris3DRig(maxAnisotropy = 4): Boris3DRig {
   const lowerJawMesh = new THREE.Mesh(lowerJawGeo, lowerJawMat);
   lowerJawGroup.add(lowerJawMesh);
 
-  const lowerJawOutlineGeo = track(buildOutlineGeometry(lowerJawGeo, 0.0048));
+  const lowerJawOutlineGeo = track(
+    buildOutlineGeometry(lowerJawGeo, 0.0048, (x) => smoothstepLocal(0.006, 0.042, x))
+  );
   lowerJawGroup.add(new THREE.Mesh(lowerJawOutlineGeo, makeOutlineMat(HX, HY)));
 
   // Recessed burgundy oral cavity + 3D coral-pink tongue (hidden when closed, vivid when mangap!)
@@ -1125,8 +1159,8 @@ export function createBoris3DRig(maxAnisotropy = 4): Boris3DRig {
 
   const scleraGeo = track(new THREE.SphereGeometry(0.035, 20, 14));
   scleraGeo.scale(0.88, 1.0, 0.28);
-  const eyeRimGeo = track(new THREE.SphereGeometry(0.0385, 20, 14));
-  eyeRimGeo.scale(0.88, 1.0, 0.24);
+  const eyeRimGeo = track(new THREE.SphereGeometry(0.0361, 20, 14));
+  eyeRimGeo.scale(0.88, 1.0, 0.22);
   const irisGeo = track(new THREE.SphereGeometry(0.02, 18, 12));
   irisGeo.scale(0.88, 1.0, 0.26);
   const pupilGeo = track(new THREE.SphereGeometry(0.0125, 16, 10));
@@ -1140,7 +1174,7 @@ export function createBoris3DRig(maxAnisotropy = 4): Boris3DRig {
     new THREE.Vector3(0.01, 0.012, 0.003),
     new THREE.Vector3(0.024, -0.006, 0),
   ]);
-  const happyGeo = track(new THREE.TubeGeometry(happyCurve, 12, 0.0052, 8, false));
+  const happyGeo = track(new THREE.TubeGeometry(happyCurve, 12, 0.0044, 8, false));
 
   const eyesNormal: THREE.Group[] = [];
   const eyesPupil: THREE.Mesh[] = [];
@@ -1155,7 +1189,7 @@ export function createBoris3DRig(maxAnisotropy = 4): Boris3DRig {
 
     const normalEye = new THREE.Group();
     const rim = new THREE.Mesh(eyeRimGeo, eyeRimMat);
-    rim.position.z = -side * 0.0012;
+    rim.position.z = -side * 0.0005;
     const sclera = new THREE.Mesh(scleraGeo, scleraMat);
     const iris = new THREE.Mesh(irisGeo, irisMat);
     iris.position.set(0.006, 0.001, side * 0.0068);
@@ -1262,8 +1296,8 @@ export function applyBoris3DPose(rig: Boris3DRig, p: Boris3DPose) {
   rig.pitchGroup.rotation.z = 0;
   rig.pitchGroup.rotation.x = p.inspectPitch ?? 0;
   rig.bodyGroup.rotation.z = -p.tilt;
-
   rig.bodyGroup.position.x = p.biteLunge * 0.011;
+  rig.bodyGroup.scale.set(1 - p.sq * 0.24, 1 + p.sq * 0.3, 1);
 
   // 2. Spine S-Wave, Gulp Bulge, Puff Cheek & Squash-Stretch Uniforms
   const swimAmp = 0.016 + p.swimSpeed * 0.032 + turnAmt * 0.048;
