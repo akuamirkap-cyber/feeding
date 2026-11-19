@@ -985,20 +985,51 @@ function genChest(ph: number): Pix {
 // ============================================================================
 // REGISTRY — builds every animated sprite set (optionally tinted for far planes)
 // ============================================================================
+// Static pixel sprite dimensions for meta-only startup (matches genUrchin, genStar, genJelly, genCrab, genVent, genChest)
+function metaDims(name: string, idx: number): [number, number] {
+  if (name === "urchin" || name === "urchin2") return [21, 14];
+  if (name === "star" || name === "star2") return [15, 14];
+  if (name === "crab") return [19, 11];
+  if (name === "vent") return [74, 96];
+  if (name === "chest") return [42, 32];
+  if (name === "jelly") {
+    const R = 6 + (idx % 2) * 3;
+    return [R * 2 + 8, Math.round(R * 3.7) + 6];
+  }
+  if (name === "jelly2") {
+    const R = 7 + (idx % 2) * 3;
+    return [R * 2 + 8, Math.round(R * 3.7) + 6];
+  }
+  return [32, 32];
+}
+
 /**
- * Builds every animated sprite set. It is a generator that finishes one sprite family per step, so the
- * caller can spread the work over many frames instead of freezing the page.
+ * Builds every animated sprite set. When `metaOnly` is true, returns zero-pixel metadata (`f: []`, exact `w`/`h`)
+ * instantaneously so 2D/3D modes never waste startup time rasterizing 16-bit pixel art unless Pixel Mode is active.
  */
-export function* buildBiota(tint?: [number, number], only?: string[]): Generator<void, BioSet, void> {
+export function* buildBiota(tint?: [number, number], only?: string[], metaOnly = false): Generator<void, BioSet, void> {
   const out: BioSet = {};
   const jobs: [string, () => Bio[]][] = [];
   const cv = (p: Pix) => {
     if (tint) p.tint(tint[0], tint[1]);
     return p.toCanvas();
   };
-  const A = (mk: (ph: number) => Pix) => Array.from({ length: NF }, (_, i) => cv(mk(i / NF)));
-  const S = (src: Pix, amp: number, pw: number, lag: number, top = false) => A((ph) => sway(src, ph, amp, pw, lag, top));
-  const B = (f: HTMLCanvasElement[], foot: number, fps: number, ex: Partial<Bio> = {}): Bio => ({ f, w: f[0].width, h: f[0].height, foot, fps, mode: 0, ...ex });
+  const A = (mk: (ph: number) => Pix, mw?: number, mh?: number) =>
+    metaOnly ? { f: [] as HTMLCanvasElement[], w: mw ?? 0, h: mh ?? 0 } : Array.from({ length: NF }, (_, i) => cv(mk(i / NF)));
+  const S = (src: () => Pix, amp: number, pw: number, lag: number, top = false, mw?: number, mh?: number) => {
+    if (metaOnly) return { f: [] as HTMLCanvasElement[], w: mw ?? 0, h: mh ?? 0 };
+    const base = src();
+    return Array.from({ length: NF }, (_, i) => cv(sway(base, i / NF, amp, pw, lag, top)));
+  };
+  const B = (
+    res: HTMLCanvasElement[] | { f: HTMLCanvasElement[]; w: number; h: number },
+    foot: number,
+    fps: number,
+    ex: Partial<Bio> = {}
+  ): Bio => {
+    if (Array.isArray(res)) return { f: res, w: res[0].width, h: res[0].height, foot, fps, mode: 0, ...ex };
+    return { f: res.f, w: res.w, h: res.h, foot, fps, mode: 0, ...ex };
+  };
   const def = (name: string, mk: () => Bio[]) => {
     if (!only || only.includes(name)) jobs.push([name, mk]);
   };
@@ -1006,24 +1037,24 @@ export function* buildBiota(tint?: [number, number], only?: string[]): Generator
   const G = { cyan: "rgba(60, 220, 255, 0.5)", mag: "rgba(240, 110, 250, 0.5)", vio: "rgba(150, 130, 255, 0.5)", amber: "rgba(255, 170, 70, 0.5)", pinkG: "rgba(255, 130, 190, 0.45)" };
 
   // ---------- sunlit reef ----------
-  def("staghorn", () => [L.coral, L.orange, L.blue, L.yellow, L.pink].map((pl, i) => B(A((ph) => genBranch(11 + i * 7, pl, ph, 58, 56, 14 + (i % 3), 3.6, 3)), 6, 5)));
-  def("table", () => [L.teal, L.purple, L.yellow, L.pink].map((pl, i) => B(A((ph) => genTable(31 + i * 5, pl, ph, i % 2 ? 44 : 54, 32)), 4, 6)));
-  def("brain", () => [L.yellow, L.green, L.orange].map((pl, i) => B(A((ph) => genBrain(51 + i * 3, pl, ph, 32 + i * 6, 19 + i * 3)), 11 + i * 2, 6)));
-  def("pillar", () => [L.yellow, L.lime, L.pink].map((pl, i) => B(A((ph) => genPillar(61 + i * 9, pl, ph, 34, 40 + i * 5)), 11, 5)));
-  def("lettuce", () => [L.green, L.purple, L.orange].map((pl, i) => B(A((ph) => genLettuce(71 + i * 3, pl, ph, 42 + (i % 2) * 8, 25 + (i % 2) * 4)), 13, 6)));
-  def("fan", () => [L.purple, L.pink, L.red, L.orange].map((pl, i) => B(S(genFan(81 + i * 11, pl, 62 - (i % 2) * 12, 64 - (i % 2) * 12), 3, 1.3, 0.9), 3, 7)));
-  def("whip", () => [L.orange, L.red, L.yellow].map((pl, i) => B(S(genWhip(91 + i * 5, pl, 46, 60 + i * 5), 3.4, 1.6, 1.7), 5, 7)));
-  def("tubes", () => [L.yellow, L.purple, L.orange, L.blue].map((pl, i) => B(A((ph) => genTubes(101 + i * 7, pl, ph, 38, 50)), 10, 7)));
-  def("barrel", () => [L.red, L.pink].map((pl, i) => B(A((ph) => genTubes(111 + i, pl, ph, 40, 48, true)), 10, 7)));
+  def("staghorn", () => [L.coral, L.orange, L.blue, L.yellow, L.pink].map((pl, i) => B(A((ph) => genBranch(11 + i * 7, pl, ph, 58, 56, 14 + (i % 3), 3.6, 3), 58, 56), 6, 5)));
+  def("table", () => [L.teal, L.purple, L.yellow, L.pink].map((pl, i) => B(A((ph) => genTable(31 + i * 5, pl, ph, i % 2 ? 44 : 54, 32), i % 2 ? 44 : 54, 32), 4, 6)));
+  def("brain", () => [L.yellow, L.green, L.orange].map((pl, i) => B(A((ph) => genBrain(51 + i * 3, pl, ph, 32 + i * 6, 19 + i * 3), 32 + i * 6, 19 + i * 3), 11 + i * 2, 6)));
+  def("pillar", () => [L.yellow, L.lime, L.pink].map((pl, i) => B(A((ph) => genPillar(61 + i * 9, pl, ph, 34, 40 + i * 5), 34, 40 + i * 5), 11, 5)));
+  def("lettuce", () => [L.green, L.purple, L.orange].map((pl, i) => B(A((ph) => genLettuce(71 + i * 3, pl, ph, 42 + (i % 2) * 8, 25 + (i % 2) * 4), 42 + (i % 2) * 8, 25 + (i % 2) * 4), 13, 6)));
+  def("fan", () => [L.purple, L.pink, L.red, L.orange].map((pl, i) => B(S(() => genFan(81 + i * 11, pl, 62 - (i % 2) * 12, 64 - (i % 2) * 12), 3, 1.3, 0.9, false, 62 - (i % 2) * 12, 64 - (i % 2) * 12), 3, 7)));
+  def("whip", () => [L.orange, L.red, L.yellow].map((pl, i) => B(S(() => genWhip(91 + i * 5, pl, 46, 60 + i * 5), 3.4, 1.6, 1.7, false, 46, 60 + i * 5), 5, 7)));
+  def("tubes", () => [L.yellow, L.purple, L.orange, L.blue].map((pl, i) => B(A((ph) => genTubes(101 + i * 7, pl, ph, 38, 50), 38, 50), 10, 7)));
+  def("barrel", () => [L.red, L.pink].map((pl, i) => B(A((ph) => genTubes(111 + i, pl, ph, 40, 48, true), 40, 48), 10, 7)));
   def("anemone", () =>
     ([[L.pink, L.bone[4]], [L.green, L.pink[3]], [L.orange, L.bone[4]], [L.purple, L.yellow[3]]] as [Pal, number][]).map(([pl, tp], i) =>
-      B(A((ph) => genAnemone(121 + i * 3, pl, tp, ph, 52, 31, 15, 15)), 6, 8)
+      B(A((ph) => genAnemone(121 + i * 3, pl, tp, ph, 52, 31, 15, 15), 52, 31), 6, 8)
     )
   );
   def("clam", () =>
     [L.blue, L.purple, L.teal, L.green].map((m) =>
-      B(A((ph) => genClam(L.bone, m, ph, 0, 48, 34)), 10, 6, {
-        shy: [cv(genClam(L.bone, m, 0, 0.58, 48, 34)), cv(genClam(L.bone, m, 0, 1, 48, 34))],
+      B(A((ph) => genClam(L.bone, m, ph, 0, 48, 34), 48, 34), 10, 6, {
+        shy: metaOnly ? [] : [cv(genClam(L.bone, m, 0, 0.58, 48, 34)), cv(genClam(L.bone, m, 0, 1, 48, 34))],
         glow: "rgba(255, 240, 200, 0.36)",
         gy: 0.46,
       })
@@ -1031,59 +1062,87 @@ export function* buildBiota(tint?: [number, number], only?: string[]): Generator
   );
   def("worm", () =>
     [L.red, L.yellow, L.blue, L.pink, L.orange].map((pl, i) =>
-      B(A((ph) => genWorm(131 + i * 7, pl, L.bone, ph, 0, 30, 24)), 7, 8, { shy: [cv(genWorm(131 + i * 7, pl, L.bone, 0, 0.6, 30, 24)), cv(genWorm(131 + i * 7, pl, L.bone, 0, 1, 30, 24))] })
+      B(A((ph) => genWorm(131 + i * 7, pl, L.bone, ph, 0, 30, 24), 30, 24), 7, 8, {
+        shy: metaOnly ? [] : [cv(genWorm(131 + i * 7, pl, L.bone, 0, 0.6, 30, 24)), cv(genWorm(131 + i * 7, pl, L.bone, 0, 1, 30, 24))],
+      })
     )
   );
-  def("grass", () => [L.green, L.kelp, L.lime].map((pl, i) => B(S(genGrass(141 + i, pl, 28, 22 + i * 3), 2.2, 1.4, 1.2), 5, 8)));
-  def("kelp", () => [L.kelp, L.olive, L.kelp].map((pl, i) => B(S(genKelp(151 + i * 3, pl, 50, 74 + i * 22), 4.5 + i, 1.4, 2.4), 3, 7)));
-  def("kelpBig", () => [L.kelp, L.olive].map((pl, i) => B(S(genKelp(191 + i * 3, pl, 84, 170 + i * 40, 2), 9, 1.4, 2.4), 4, 7)));
-  def("urchin", () => [L.dark, L.red, L.purple].map((pl, i) => B(A((ph) => genUrchin(161 + i, pl, ph)), 4, 6)));
-  def("star", () => [L.orange, L.red, L.blue].map((pl) => B(A((ph) => genStar(pl, ph)), 4, 3)));
-  def("shelf", () => [L.pink, L.teal, L.orange].map((pl, i) => B(A((ph) => genShelf(171 + i * 3, pl, ph, 22, 24)), 0, 6, { mode: 2 })));
-  def("vine", () => [L.kelp, L.green].map((pl, i) => B(S(genVine(181 + i * 3, pl, 16, 30 + i * 8), 3, 1.5, 1.8, true), 0, 7, { mode: 1 })));
+  def("grass", () => [L.green, L.kelp, L.lime].map((pl, i) => B(S(() => genGrass(141 + i, pl, 28, 22 + i * 3), 2.2, 1.4, 1.2, false, 28, 22 + i * 3), 5, 8)));
+  def("kelp", () => [L.kelp, L.olive, L.kelp].map((pl, i) => B(S(() => genKelp(151 + i * 3, pl, 50, 74 + i * 22), 4.5 + i, 1.4, 2.4, false, 50, 74 + i * 22), 3, 7)));
+  def("kelpBig", () => [L.kelp, L.olive].map((pl, i) => B(S(() => genKelp(191 + i * 3, pl, 84, 170 + i * 40, 2), 9, 1.4, 2.4, false, 84, 170 + i * 40), 4, 7)));
+  def("urchin", () => [L.dark, L.red, L.purple].map((pl, i) => { const [w, h] = metaDims("urchin", i); return B(A((ph) => genUrchin(161 + i, pl, ph), w, h), 4, 6); }));
+  def("star", () => [L.orange, L.red, L.blue].map((pl, i) => { const [w, h] = metaDims("star", i); return B(A((ph) => genStar(pl, ph), w, h), 4, 3); }));
+  def("shelf", () => [L.pink, L.teal, L.orange].map((pl, i) => B(A((ph) => genShelf(171 + i * 3, pl, ph, 22, 24), 22, 24), 0, 6, { mode: 2 })));
+  def("vine", () => [L.kelp, L.green].map((pl, i) => B(S(() => genVine(181 + i * 3, pl, 16, 30 + i * 8), 3, 1.5, 1.8, true, 16, 30 + i * 8), 0, 7, { mode: 1 })));
 
   // ---------- twilight wall ----------
-  def("staghorn2", () => [L.purple, L.indigo, L.teal].map((pl, i) => B(A((ph) => genBranch(211 + i * 7, pl, ph, 58, 56, 15, 3.6, 3)), 6, 5)));
-  def("brain2", () => [L.purple, L.indigo].map((pl, i) => B(A((ph) => genBrain(221 + i * 3, pl, ph, 38, 22)), 13, 6)));
-  def("lettuce2", () => [L.indigo, L.teal].map((pl, i) => B(A((ph) => genLettuce(231 + i * 3, pl, ph, 48, 28)), 14, 6)));
-  def("fan2", () => [L.indigo, L.magenta, L.blue].map((pl, i) => B(S(genFan(241 + i * 11, pl, 66, 68), 3.2, 1.3, 0.9), 3, 7)));
-  def("whip2", () => [L.purple, L.teal].map((pl, i) => B(S(genWhip(251 + i * 5, pl, 46, 68), 3.4, 1.6, 1.7), 5, 7)));
-  def("barrel2", () => [L.indigo, L.purple].map((pl, i) => B(A((ph) => genTubes(261 + i, pl, ph, 42, 52, true)), 10, 7)));
+  def("staghorn2", () => [L.purple, L.indigo, L.teal].map((pl, i) => B(A((ph) => genBranch(211 + i * 7, pl, ph, 58, 56, 15, 3.6, 3), 58, 56), 6, 5)));
+  def("brain2", () => [L.purple, L.indigo].map((pl, i) => B(A((ph) => genBrain(221 + i * 3, pl, ph, 38, 22), 38, 22), 13, 6)));
+  def("lettuce2", () => [L.indigo, L.teal].map((pl, i) => B(A((ph) => genLettuce(231 + i * 3, pl, ph, 48, 28), 48, 28), 14, 6)));
+  def("fan2", () => [L.indigo, L.magenta, L.blue].map((pl, i) => B(S(() => genFan(241 + i * 11, pl, 66, 68), 3.2, 1.3, 0.9, false, 66, 68), 3, 7)));
+  def("whip2", () => [L.purple, L.teal].map((pl, i) => B(S(() => genWhip(251 + i * 5, pl, 46, 68), 3.4, 1.6, 1.7, false, 46, 68), 5, 7)));
+  def("barrel2", () => [L.indigo, L.purple].map((pl, i) => B(A((ph) => genTubes(261 + i, pl, ph, 42, 52, true), 42, 52), 10, 7)));
   def("anemone2", () =>
     ([[L.magenta, L.cyan[3]], [L.cyan, L.bone[4]]] as [Pal, number][]).map(([pl, tp], i) =>
-      B(A((ph) => genAnemone(271 + i * 3, pl, tp, ph, 52, 31, 15, 15)), 6, 8, { glow: i ? G.cyan : G.mag, gy: 0.5 })
+      B(A((ph) => genAnemone(271 + i * 3, pl, tp, ph, 52, 31, 15, 15), 52, 31), 6, 8, { glow: i ? G.cyan : G.mag, gy: 0.5 })
     )
   );
-  def("crinoid", () => ([[L.yellow, L.orange[4]], [L.red, L.yellow[3]], [L.orange, L.bone[4]]] as [Pal, number][]).map(([pl, tp], i) => B(A((ph) => genAnemone(281 + i * 3, pl, tp, ph, 56, 36, 9, 20, true)), 3, 7)));
-  def("tunicate", () => [L.blue, L.cyan, L.purple].map((pl, i) => B(A((ph) => genTunicate(291 + i * 3, pl, ph, 30, 24)), 8, 5, { glow: i === 2 ? G.vio : G.cyan, gy: 0.6 })));
-  def("shelf2", () => [L.purple, L.indigo, L.cyan].map((pl, i) => B(A((ph) => genShelf(301 + i * 3, pl, ph, 22, 24)), 0, 6, { mode: 2 })));
-  def("vine2", () => [L.cyan, L.magenta].map((pl, i) => B(S(genVine(311 + i * 3, pl, 16, 34 + i * 8, true), 3, 1.5, 1.8, true), 0, 7, { mode: 1, glow: i ? G.mag : G.cyan, gy: 0.85 })));
+  def("crinoid", () => ([[L.yellow, L.orange[4]], [L.red, L.yellow[3]], [L.orange, L.bone[4]]] as [Pal, number][]).map(([pl, tp], i) => B(A((ph) => genAnemone(281 + i * 3, pl, tp, ph, 56, 36, 9, 20, true), 56, 36), 3, 7)));
+  def("tunicate", () => [L.blue, L.cyan, L.purple].map((pl, i) => B(A((ph) => genTunicate(291 + i * 3, pl, ph, 30, 24), 30, 24), 8, 5, { glow: i === 2 ? G.vio : G.cyan, gy: 0.6 })));
+  def("shelf2", () => [L.purple, L.indigo, L.cyan].map((pl, i) => B(A((ph) => genShelf(301 + i * 3, pl, ph, 22, 24), 22, 24), 0, 6, { mode: 2 })));
+  def("vine2", () => [L.cyan, L.magenta].map((pl, i) => B(S(() => genVine(311 + i * 3, pl, 16, 34 + i * 8, true), 3, 1.5, 1.8, true, 16, 34 + i * 8), 0, 7, { mode: 1, glow: i ? G.mag : G.cyan, gy: 0.85 })));
 
   // ---------- midnight garden & abyss ----------
-  def("crinoid2", () => ([[L.bone, L.cyan[3]], [L.magenta, L.bone[4]]] as [Pal, number][]).map(([pl, tp], i) => B(A((ph) => genAnemone(321 + i * 3, pl, tp, ph, 56, 36, 9, 20, true)), 3, 7)));
-  def("pen", () => [L.magenta, L.cyan, L.ember].map((pl, i) => B(A((ph) => genPen(331 + i * 3, pl, ph, 22, 40 + i * 4)), 2, 8, { glow: [G.mag, G.cyan, G.amber][i], gy: 0.6 })));
-  def("bamboo", () => [L.cyan, L.bone].map((pl, i) => B(S(genWhip(341 + i * 5, pl, 44, 64, true), 3.2, 1.6, 1.7), 5, 7, { glow: G.cyan, gy: 0.6 })));
-  def("crystal", () => [L.cyan, L.magenta, L.indigo].map((pl, i) => B(A((ph) => genCrystal(351 + i * 3, pl, ph, 46, 52 - i * 7)), 9, 7, { glow: [G.cyan, G.mag, G.vio][i], gy: 0.45 })));
-  def("bubblegum", () => [L.pink, L.red, L.magenta].map((pl, i) => B(A((ph) => genBranch(361 + i * 7, pl, ph, 58, 54, 14, 3.6, 3, true)), 6, 5, { glow: G.pinkG, gy: 0.6 })));
+  def("crinoid2", () => ([[L.bone, L.cyan[3]], [L.magenta, L.bone[4]]] as [Pal, number][]).map(([pl, tp], i) => B(A((ph) => genAnemone(321 + i * 3, pl, tp, ph, 56, 36, 9, 20, true), 56, 36), 3, 7)));
+  def("pen", () => [L.magenta, L.cyan, L.ember].map((pl, i) => B(A((ph) => genPen(331 + i * 3, pl, ph, 22, 40 + i * 4), 22, 40 + i * 4), 2, 8, { glow: [G.mag, G.cyan, G.amber][i], gy: 0.6 })));
+  def("bamboo", () => [L.cyan, L.bone].map((pl, i) => B(S(() => genWhip(341 + i * 5, pl, 44, 64, true), 3.2, 1.6, 1.7, false, 44, 64), 5, 7, { glow: G.cyan, gy: 0.6 })));
+  def("crystal", () => [L.cyan, L.magenta, L.indigo].map((pl, i) => B(A((ph) => genCrystal(351 + i * 3, pl, ph, 46, 52 - i * 7), 46, 52 - i * 7), 9, 7, { glow: [G.cyan, G.mag, G.vio][i], gy: 0.45 })));
+  def("bubblegum", () => [L.pink, L.red, L.magenta].map((pl, i) => B(A((ph) => genBranch(361 + i * 7, pl, ph, 58, 54, 14, 3.6, 3, true), 58, 54), 6, 5, { glow: G.pinkG, gy: 0.6 })));
   def("riftia", () =>
     [0, 1, 2].map((i) =>
-      B(A((ph) => genRiftia(371 + i * 3, L.bone, L.red, ph, 0, 34, 36)), 9, 7, { shy: [cv(genRiftia(371 + i * 3, L.bone, L.red, 0, 0.5, 34, 36)), cv(genRiftia(371 + i * 3, L.bone, L.red, 0, 1, 34, 36))] })
+      B(A((ph) => genRiftia(371 + i * 3, L.bone, L.red, ph, 0, 34, 36), 34, 36), 9, 7, {
+        shy: metaOnly ? [] : [cv(genRiftia(371 + i * 3, L.bone, L.red, 0, 0.5, 34, 36)), cv(genRiftia(371 + i * 3, L.bone, L.red, 0, 1, 34, 36))],
+      })
     )
   );
-  def("urchin2", () => [L.dark, L.indigo].map((pl, i) => B(A((ph) => genUrchin(381 + i, pl, ph)), 4, 6)));
-  def("star2", () => [L.bone, L.pink].map((pl) => B(A((ph) => genStar(pl, ph)), 4, 3)));
+  def("urchin2", () => [L.dark, L.indigo].map((pl, i) => { const [w, h] = metaDims("urchin2", i); return B(A((ph) => genUrchin(381 + i, pl, ph), w, h), 4, 6); }));
+  def("star2", () => [L.bone, L.pink].map((pl, i) => { const [w, h] = metaDims("star2", i); return B(A((ph) => genStar(pl, ph), w, h), 4, 3); }));
 
   // ---------- drifters & set pieces ----------
-  def("jelly", () => [L.blue, L.indigo, L.pink].map((pl, i) => B(A((ph) => genJelly(401 + i, pl, ph, 6 + (i % 2) * 3)), 0, 7)));
-  def("jelly2", () => [L.magenta, L.cyan, L.purple].map((pl, i) => B(A((ph) => genJelly(411 + i, pl, ph, 7 + (i % 2) * 3)), 0, 7, { glow: [G.mag, G.cyan, G.vio][i], gy: 0.75 })));
-  def("crab", () => [L.red, L.orange].map((pl) => B(A((ph) => genCrab(pl, ph)), 4, 10)));
-  def("vent", () => [0, 1, 2].map((i) => B(A((ph) => genVent(421 + i * 5, ph)), 14, 8, { glow: "rgba(110, 225, 255, 0.42)", gy: 0.42 })));
-  def("chest", () => [B(A((ph) => genChest(ph)), 12, 6)]);
+  def("jelly", () => [L.blue, L.indigo, L.pink].map((pl, i) => { const [w, h] = metaDims("jelly", i); return B(A((ph) => genJelly(401 + i, pl, ph, 6 + (i % 2) * 3), w, h), 0, 7); }));
+  def("jelly2", () => [L.magenta, L.cyan, L.purple].map((pl, i) => { const [w, h] = metaDims("jelly2", i); return B(A((ph) => genJelly(411 + i, pl, ph, 7 + (i % 2) * 3), w, h), 0, 7, { glow: [G.mag, G.cyan, G.vio][i], gy: 0.75 }); }));
+  def("crab", () => [L.red, L.orange].map((pl, i) => { const [w, h] = metaDims("crab", i); return B(A((ph) => genCrab(pl, ph), w, h), 4, 10); }));
+  def("vent", () => [0, 1, 2].map((i) => { const [w, h] = metaDims("vent", i); return B(A((ph) => genVent(421 + i * 5, ph), w, h), 14, 8, { glow: "rgba(110, 225, 255, 0.42)", gy: 0.42 }); }));
+  def("chest", () => { const [w, h] = metaDims("chest", 0); return [B(A((ph) => genChest(ph), w, h), 12, 6)]; });
   for (const [name, mk] of jobs) {
     out[name] = mk();
-    yield;
+    if (!metaOnly) yield;
   }
   return out;
+}
+
+/** Lazily populates pixel-art `f` and `shy` frames onto an already-created BioSet in-place. */
+export function hydratePixelBiota(target: BioSet, tint?: [number, number], only?: string[]) {
+  const gen = buildBiota(tint, only, false);
+  let built: BioSet = {};
+  for (;;) {
+    const r = gen.next();
+    if (r.done) {
+      built = r.value;
+      break;
+    }
+  }
+  for (const [k, list] of Object.entries(built)) {
+    const dst = target[k];
+    if (!dst) {
+      target[k] = list;
+      continue;
+    }
+    for (let i = 0; i < list.length && i < dst.length; i++) {
+      dst[i].f = list[i].f;
+      if (list[i].shy) dst[i].shy = list[i].shy;
+    }
+  }
 }
 
 // ============================================================================

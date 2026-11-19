@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SKINS, skinToSpecies } from "../game/species";
-import { spriteAnimPreviewCanvases, coinSprite } from "../game/sprites";
+import { spritePreviewFrameSingle, coinSprite } from "../game/sprites";
 import type { JawState } from "../game/sprites";
-import { fish3d } from "../game/fish3d";
+import { fish3d, isSoftwareWebGL } from "../game/fish3d";
 import Fish3DViewport from "./Fish3DViewport";
 import type { SaveData } from "../save";
 import { UPGRADE_COSTS, MAX_UPGRADE } from "../save";
@@ -12,115 +12,34 @@ import { TROPHIES, isTrophyMet } from "../trophies";
 interface Props {
   save: SaveData;
   setSave: (s: SaveData) => void;
-  onPlay: () => void;
+  onPlay: (skinIdOverride?: string) => void;
   onOpenTrophies: () => void;
   loading?: boolean;
   loadPct?: number;
+  paused?: boolean;
 }
 
 const UPGRADES: { id: keyof Upgrades; name: string; desc: string; icon: string }[] = [
-  { id: "suck", name: "Sedotan Super", desc: "Jangkauan & tarikan arus sedot lebih luas", icon: "🌀" },
-  { id: "speed", name: "Sirip Turbo", desc: "Berenang & bermanuver jauh lebih lincah", icon: "💨" },
-  { id: "size", name: "Ikan Bongsor", desc: "Masuk lautan dengan ukuran awal lebih besar", icon: "🍔" },
+  { id: "suck", name: "Sedotan Super", desc: "Jangkauan & tarikan arus sedot lebih luas.", icon: "🌀" },
+  { id: "speed", name: "Sirip Turbo", desc: "Berenang & bermanuver jauh lebih lincah.", icon: "💨" },
+  { id: "size", name: "Ikan Bongsor", desc: "Masuk lautan dengan ukuran awal lebih besar.", icon: "🍔" },
 ];
 
 export function coinURL() {
   return coinSprite(0).toDataURL();
 }
 
-const HERO_CANVASES: Record<string, HTMLCanvasElement[]> = {};
-const ETALASE_CANVASES_2D: Record<string, HTMLCanvasElement[]> = {};
-const ETALASE_CANVASES_3D: Record<string, HTMLCanvasElement[]> = {};
+type OpaqueBox = { minX: number; minY: number; maxX: number; maxY: number };
 
-const PREVIEW_CYCLE: JawState[] = [
-  0, 0, 0, 0, 0,
-  1, 2, 4, 5, 6, 6, 6, 6,
-  4, 2, -1, -1, -1, -1,
-  2, 4, 2, -1, -1,
-  0, 0, 0, 0, 0, 0, 0, 0,
-];
+const TILE_CANVASES_2D: Record<string, (HTMLCanvasElement | undefined)[]> = {};
+const TILE_BOX_2D: Record<string, OpaqueBox> = {};
+const TILE_CANVASES_3D: Record<string, (HTMLCanvasElement | undefined)[]> = {};
+const CTX_CACHE = new WeakMap<HTMLCanvasElement, CanvasRenderingContext2D>();
 
-// 16-frame swim + occasional bite/smile cycle rendered for every fish displayed in the etalase
-const ETALASE_CYCLE: JawState[] = [
-  0, 0, 0, 0,
-  1, 3, 5, 6,
-  4, 2, 0, -1,
-  -1, -1, 0, 0,
-];
+// 4-frame swim + chomp/smile cycle for tile cards & 2D hero preview (2x faster baking, drawn at ~8.3fps)
+const TILE_CYCLE: JawState[] = [0, 3, 6, -1];
 
-function drawPreviewFrame(
-  cv: HTMLCanvasElement | null,
-  frame: HTMLCanvasElement | undefined,
-  cssW: number,
-  cssH: number,
-  scaleMult: number,
-  bobY: number,
-  tilt: number
-) {
-  if (!cv || !frame) return;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const pw = Math.round(cssW * dpr);
-  const ph = Math.round(cssH * dpr);
-  if (cv.width !== pw || cv.height !== ph) {
-    cv.width = pw;
-    cv.height = ph;
-  }
-  const ctx = cv.getContext("2d");
-  if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cssW, cssH);
-
-  const pad = 6;
-  const fit = Math.min((cssW - pad * 2) / frame.width, (cssH - pad * 2) / frame.height) * scaleMult;
-  const dw = frame.width * fit;
-  const dh = frame.height * fit;
-
-  ctx.save();
-  ctx.translate(cssW * 0.5, cssH * 0.5 + bobY);
-  ctx.rotate(tilt);
-  ctx.drawImage(frame, -dw * 0.5, -dh * 0.5, dw, dh);
-  ctx.restore();
-}
-
-// Normalized showcase scale multipliers after transparent-margin auto-crop,
-// keeping Nemo compact/cute, lifting small fish readability, and giving large predators presence.
-const ETALASE_SCALE: Record<string, number> = {
-  orange: 0.72,
-  layla: 0.88,
-  pierre: 0.86,
-  buntal: 0.80,
-  dori: 0.86,
-  andy: 0.90,
-  andy_blue: 0.90,
-  boris: 0.90,
-  kakatua: 0.92,
-  peter: 0.92,
-  eddy: 0.94,
-  leon: 0.98,
-  idol: 0.96,
-  layaran: 1.0,
-  pari: 1.04,
-  hiu: 1.04,
-  hiu_elegan: 1.04,
-  hiu_totol: 1.04,
-  orca: 1.04,
-  mandarin: 0.98,
-  aurora: 1.02,
-  narwhal: 1.04,
-  seadragon: 1.04,
-  axolotl: 0.98,
-  whaleshark: 1.04,
-  tuna: 1.0,
-  hammerhead: 1.02,
-  butterfly: 0.92,
-  snapper: 0.96,
-  lumba: 1.02,
-  lumba_pink: 1.02,
-  snapturtle: 1.04,
-  snapturtle_albino: 1.04,
-};
-
-const HERO_SCALE: Record<string, number> = {
+const TILE_SCALE: Record<string, number> = {
   orange: 0.78,
   buntal: 0.86,
   dori: 0.92,
@@ -156,117 +75,418 @@ const HERO_SCALE: Record<string, number> = {
   snapturtle_albino: 1.06,
 };
 
-export default function Menu({ save, setSave, onPlay, onOpenTrophies, loading = false, loadPct = 0 }: Props) {
-  const [tab, setTab] = useState<"skin" | "shop">("skin");
+function drawFishCanvas(
+  cv: HTMLCanvasElement | null,
+  frame: HTMLCanvasElement | undefined,
+  cssW: number,
+  cssH: number,
+  scaleMult: number,
+  maxDpr = 1.4
+) {
+  if (!cv || !frame) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
+  const pw = Math.round(cssW * dpr);
+  const ph = Math.round(cssH * dpr);
+  if (cv.width !== pw || cv.height !== ph) {
+    cv.width = pw;
+    cv.height = ph;
+  }
+  let ctx = CTX_CACHE.get(cv);
+  if (!ctx) {
+    const got = cv.getContext("2d");
+    if (!got) return;
+    CTX_CACHE.set(cv, got);
+    ctx = got;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const pad = 6;
+  const fit = Math.min((cssW - pad * 2) / frame.width, (cssH - pad * 2) / frame.height) * scaleMult;
+  const dw = frame.width * fit;
+  const dh = frame.height * fit;
+
+  ctx.drawImage(frame, cssW * 0.5 - dw * 0.5, cssH * 0.5 - dh * 0.5, dw, dh);
+}
+
+function CornerRivets() {
+  return (
+    <>
+      <div className="pointer-events-none absolute top-2 left-2 w-2.5 h-2.5 rounded-full bg-[#e3ab4b] border border-[#3b1d06] shadow-sm flex items-center justify-center text-[6px] text-[#4d2808] z-20">
+        ✕
+      </div>
+      <div className="pointer-events-none absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-[#e3ab4b] border border-[#3b1d06] shadow-sm flex items-center justify-center text-[6px] text-[#4d2808] z-20">
+        ✕
+      </div>
+      <div className="pointer-events-none absolute bottom-2 left-2 w-2.5 h-2.5 rounded-full bg-[#e3ab4b] border border-[#3b1d06] shadow-sm flex items-center justify-center text-[6px] text-[#4d2808] z-20">
+        ✕
+      </div>
+      <div className="pointer-events-none absolute bottom-2 right-2 w-2.5 h-2.5 rounded-full bg-[#e3ab4b] border border-[#3b1d06] shadow-sm flex items-center justify-center text-[6px] text-[#4d2808] z-20">
+        ✕
+      </div>
+    </>
+  );
+}
+
+export default function Menu({ save, setSave, onPlay, onOpenTrophies, loading = false, loadPct = 0, paused = false }: Props) {
+  const softWebGL = useMemo(() => isSoftwareWebGL(), []);
+  const [showUpgrade, setShowUpgrade] = useState(false);
   const [biteTrig, setBiteTrig] = useState(0);
+  const [toast, setToast] = useState<{ icon: string; msg: string } | null>(null);
+
+  const cur = useMemo(() => SKINS.find((s) => s.id === save.skin) || SKINS[0], [save.skin]);
+  const activeIdx = useMemo(() => Math.max(0, SKINS.findIndex((s) => s.id === cur.id)), [cur.id]);
+
+  const activeIdxRef = useRef(activeIdx);
+  activeIdxRef.current = activeIdx;
+  const mode3DRef = useRef(save.mode3D);
+  mode3DRef.current = save.mode3D;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+  const showUpgradeRef = useRef(showUpgrade);
+  showUpgradeRef.current = showUpgrade;
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
+  const softWebGLRef = useRef(softWebGL);
+  softWebGLRef.current = softWebGL;
+
+  const gridScrollRef = useRef<HTMLDivElement | null>(null);
+  const tileRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const tileCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
+  const drawnKeysRef = useRef<(string | undefined)[]>([]);
+  const heroCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastHeroCanvasElRef = useRef<HTMLCanvasElement | null>(null);
+  const heroDrawnKeyRef = useRef<string | undefined>(undefined);
+  const softBiteUntilRef = useRef(0);
+  const toastTimerRef = useRef<number | undefined>(undefined);
+  const isScrollingRef = useRef(false);
+  const scrollIdleTimerRef = useRef<number | undefined>(undefined);
+  const scrollTopRef = useRef(0);
+  const scrollerHRef = useRef(520);
+  const tileBoundsRef = useRef<{ top: number; bottom: number }[]>([]);
+  const lastDrawStepRef = useRef(-1);
 
   const unlockedTrophyCount = useMemo(
     () => TROPHIES.filter((t) => !!save.unlockedTrophies[t.id] || isTrophyMet(t, save)).length,
-    [save]
+    [
+      save.unlockedTrophies,
+      save.best,
+      save.rank1Count,
+      save.peakLevelCount,
+      save.bestPeakTimeSec,
+      save.bestCombo,
+      save.bestDepth,
+      save.totalRuns,
+    ]
   );
 
-  const cur = SKINS.find((s) => s.id === save.skin) || SKINS[0];
+  const coin = useMemo(() => coinURL(), []);
   const heroIs3D = !!(save.mode3D && cur.supports3D);
   const heroSpecies = useMemo(() => skinToSpecies(cur, heroIs3D), [cur, heroIs3D]);
+  const showLiveHero3D = !loading && !softWebGL && heroIs3D && !paused;
 
-  const curRef = useRef(cur);
-  curRef.current = cur;
-  const mode3DRef = useRef(save.mode3D);
-  mode3DRef.current = save.mode3D;
-  const tabRef = useRef(tab);
-  tabRef.current = tab;
+  const showToastMsg = useCallback((icon: string, msg: string) => {
+    setToast({ icon, msg });
+    clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 2000);
+  }, []);
 
-  const heroCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const etalaseCanvasRefs = useRef<Record<string, HTMLCanvasElement | null>>({});
+  const triggerTestBite = useCallback(() => {
+    const activeSkin = SKINS[activeIdxRef.current];
+    const usesLive3D = !loadingRef.current && !softWebGLRef.current && !!(mode3DRef.current && activeSkin?.supports3D);
+    if (!usesLive3D) {
+      softBiteUntilRef.current = performance.now() + 900;
+    } else {
+      setBiteTrig((c) => c + 1);
+    }
+  }, []);
 
+  const selectSkin = useCallback(
+    (skinId: string) => {
+      if (save.skin === skinId) {
+        triggerTestBite();
+        return;
+      }
+      setSave({ ...save, skin: skinId });
+    },
+    [save, setSave, triggerTestBite]
+  );
+
+  const pickRandomSkin = useCallback(() => {
+    const total = SKINS.length;
+    if (total <= 1) return;
+    let nextIdx = activeIdx;
+    while (nextIdx === activeIdx) {
+      nextIdx = Math.floor(Math.random() * total);
+    }
+    const chosen = SKINS[nextIdx];
+    setShowUpgrade(false);
+    setSave({ ...save, skin: chosen.id });
+    showToastMsg("🎲", `Ikan acak: ${chosen.name}!`);
+    requestAnimationFrame(() => {
+      tileRefs.current[nextIdx]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }, [activeIdx, save, setSave, showToastMsg]);
+
+  const buyUp = (id: keyof Upgrades) => {
+    const lv = save.upgrades[id];
+    if (lv >= MAX_UPGRADE) return;
+    const cost = UPGRADE_COSTS[lv];
+    if (save.coins < cost) {
+      showToastMsg("⚠️", "Koin belum cukup untuk upgrade ini!");
+      return;
+    }
+    setSave({ ...save, coins: save.coins - cost, upgrades: { ...save.upgrades, [id]: lv + 1 } });
+    const upg = UPGRADES.find((u) => u.id === id);
+    showToastMsg("⚡", `${upg?.name || "Upgrade"} naik ke Lv ${lv + 1}!`);
+  };
+
+  const measureTileBounds = useCallback(() => {
+    const scroller = gridScrollRef.current;
+    if (!scroller) return;
+    scrollTopRef.current = scroller.scrollTop;
+    scrollerHRef.current = scroller.clientHeight || 520;
+    const bounds: { top: number; bottom: number }[] = new Array(SKINS.length);
+    for (let i = 0; i < SKINS.length; i++) {
+      const btn = tileRefs.current[i];
+      if (btn) {
+        const top = btn.offsetTop;
+        bounds[i] = { top, bottom: top + btn.offsetHeight };
+      }
+    }
+    tileBoundsRef.current = bounds;
+    lastDrawStepRef.current = -1;
+  }, []);
+
+  // Re-measure cached tile bounds when returning from Upgrade tab or resizing
+  useEffect(() => {
+    if (showUpgrade) return;
+    const scroller = gridScrollRef.current;
+    if (!scroller) return;
+    measureTileBounds();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measureTileBounds) : null;
+    ro?.observe(scroller);
+    drawnKeysRef.current = [];
+    return () => ro?.disconnect();
+  }, [showUpgrade, measureTileBounds]);
+
+  useEffect(() => {
+    lastDrawStepRef.current = -1;
+  }, [save.mode3D, save.skin]);
+
+  // Incremental 1-frame budgeted baking & zero-layout-thrash viewport-culled tile animation loop
   useEffect(() => {
     let alive = true;
     let raf = 0;
 
+    const buildOne2DFrame = (s: (typeof SKINS)[number], fi: number) => {
+      let arr = TILE_CANVASES_2D[s.id];
+      if (!arr) {
+        arr = new Array<HTMLCanvasElement | undefined>(TILE_CYCLE.length);
+        TILE_CANVASES_2D[s.id] = arr;
+      }
+      if (arr[fi]) return false;
+      const box = TILE_BOX_2D[s.id];
+      const res = spritePreviewFrameSingle(skinToSpecies(s, false), 144, TILE_CYCLE[fi], fi, box);
+      if (!TILE_BOX_2D[s.id]) TILE_BOX_2D[s.id] = res.box;
+      arr[fi] = res.canvas;
+      return true;
+    };
+
+    const buildOne3DFrame = (s: (typeof SKINS)[number], fi: number) => {
+      let arr = TILE_CANVASES_3D[s.id];
+      if (!arr) {
+        arr = new Array<HTMLCanvasElement | undefined>(TILE_CYCLE.length);
+        TILE_CANVASES_3D[s.id] = arr;
+      }
+      if (arr[fi]) return false;
+      const j = TILE_CYCLE[fi];
+      const ph = (fi / TILE_CYCLE.length) * Math.PI * 2;
+      const jawVal = j > 0 ? j / 6 : j < 0 ? -0.18 : 0;
+      arr[fi] = fish3d.renderSnapshot(
+        skinToSpecies(s, true),
+        {
+          jaw: jawVal,
+          chompPhase: j === -1 ? 0.08 : 0,
+          chompDur: 0.13,
+          chompBitFired: j === -1,
+          biteLunge: j === -1 ? 1.6 : j >= 5 ? -0.5 : 0,
+          tailPh: ph * 2,
+          wag2: ph * 2,
+          bend: Math.sin(ph) * 0.05,
+          turnFlip: 1,
+          tilt: Math.sin(ph) * 0.04,
+          gulpT: j === -1 ? 0.65 : 0,
+          gulpK: 0.65,
+          sq: j === -1 ? 0.14 : 0,
+          expr: j === -1 ? "happy" : "normal",
+          puff: j === -1,
+          sucking: false,
+          swimSpeed: 0.55,
+          inspectYaw: -0.16,
+          inspectPitch: 0.04,
+        },
+        160,
+        96
+      );
+      return true;
+    };
+
     const tick = (now: number) => {
       if (!alive) return;
+      if (document.hidden || pausedRef.current) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+
+      // Never fight active scroll inertia with baking or canvas redraws
+      if (isScrollingRef.current) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
 
       const useMode3D = mode3DRef.current;
+      const useSoft = softWebGLRef.current;
+      const inUpgrade = showUpgradeRef.current;
+      const activeIndex = activeIdxRef.current;
 
-      // Incrementally pre-render direct offscreen canvas frames (no PNG encoding overhead)
-      let built = 0;
-      for (const s of SKINS) {
-        const want3D = !!(useMode3D && s.supports3D);
-        const cache = want3D ? ETALASE_CANVASES_3D : ETALASE_CANVASES_2D;
-        if (cache[s.id]) continue;
+      // Pure numeric viewport visibility check (zero DOM offsetTop/offsetHeight queries inside rAF!)
+      const visibleIndices: number[] = [];
+      if (!inUpgrade) {
+        const viewTop = scrollTopRef.current - 150;
+        const viewBottom = scrollTopRef.current + scrollerHRef.current + 150;
+        const bounds = tileBoundsRef.current;
+        for (let i = 0; i < SKINS.length; i++) {
+          const b = bounds[i];
+          if (!b) continue;
+          if (b.bottom >= viewTop && b.top <= viewBottom) {
+            visibleIndices.push(i);
+          }
+        }
+      }
+
+      const bakeOrder = visibleIndices.includes(activeIndex)
+        ? visibleIndices
+        : [activeIndex, ...visibleIndices];
+
+      let bakedAny = false;
+      const isLoading = loadingRef.current;
+
+      // Strict budget: while the ocean is generating, skip 3D WebGL tile bakes so the reef builder
+      // gets full WebGL/CPU bandwidth; bake crisp 2D preview tiles (up to 2/frame) as fast placeholders.
+      let bakedCount = 0;
+      const max2DBakes = 2;
+      for (const idx of bakeOrder) {
+        const s = SKINS[idx];
+        const want3D = !isLoading && !!(useMode3D && s.supports3D);
         if (want3D) {
-          const sp3d = skinToSpecies(s, true);
-          cache[s.id] = ETALASE_CYCLE.map((j, fi) => {
-            const ph = (fi / ETALASE_CYCLE.length) * Math.PI * 2;
-            const jawVal = j > 0 ? j / 6 : j < 0 ? -0.18 : 0;
-            return fish3d.renderSnapshot(
-              sp3d,
-              {
-                jaw: jawVal,
-                chompPhase: j === -1 ? 0.08 : 0,
-                chompDur: 0.13,
-                chompBitFired: j === -1,
-                biteLunge: j === -1 ? 1.6 : j >= 5 ? -0.5 : 0,
-                tailPh: ph * 2,
-                wag2: ph * 2,
-                bend: Math.sin(ph) * 0.05,
-                turnFlip: 1,
-                tilt: Math.sin(ph) * 0.04,
-                gulpT: j === -1 ? 0.65 : 0,
-                gulpK: 0.65,
-                sq: j === -1 ? 0.14 : 0,
-                expr: j === -1 ? "happy" : "normal",
-                puff: j === -1,
-                sucking: false,
-                swimSpeed: 0.55,
-                inspectYaw: -0.16,
-                inspectPitch: 0.04,
-              },
-              164
-            );
-          });
-        } else {
-          cache[s.id] = spriteAnimPreviewCanvases(skinToSpecies(s, false), 156, ETALASE_CYCLE);
+          if (!TILE_CANVASES_3D[s.id]?.[0]) {
+            buildOne3DFrame(s, 0);
+            bakedAny = true;
+            bakedCount = 99;
+            break;
+          }
+        } else if (!TILE_CANVASES_2D[s.id]?.[0]) {
+          buildOne2DFrame(s, 0);
+          bakedAny = true;
+          bakedCount++;
+          if (bakedCount >= max2DBakes) break;
         }
-        if (++built >= 2) break;
       }
 
-      const step = Math.floor(now / 65);
-      const active = curRef.current;
-      const activeIs3D = !!(useMode3D && active.supports3D);
-      if (!activeIs3D) {
-        if (!HERO_CANVASES[active.id]) {
-          HERO_CANVASES[active.id] = spriteAnimPreviewCanvases(skinToSpecies(active, false), 240, PREVIEW_CYCLE);
-        }
-        const hFrames = HERO_CANVASES[active.id];
-        drawPreviewFrame(
-          heroCanvasRef.current,
-          hFrames[step % hFrames.length],
-          208,
-          112,
-          HERO_SCALE[active.id] ?? 1,
-          Math.sin(now * 0.0026) * 4.2,
-          Math.sin(now * 0.0026 - 0.8) * 0.025
-        );
-      }
-
-      if (tabRef.current === "skin") {
-        for (let idx = 0; idx < SKINS.length; idx++) {
+      // Pass 2: Remaining swim frames (1..3) baked strictly 1 at a time after loading completes
+      if (!bakedAny && !isLoading) {
+        outer: for (const idx of bakeOrder) {
           const s = SKINS[idx];
-          const use3DCard = !!(useMode3D && s.supports3D);
-          const frames = use3DCard ? ETALASE_CANVASES_3D[s.id] : ETALASE_CANVASES_2D[s.id];
-          const cv = etalaseCanvasRefs.current[s.id];
-          if (!frames || !cv) continue;
-          const phase = now * 0.003 + idx * 0.85;
-          drawPreviewFrame(
-            cv,
-            frames[(step + idx * 3) % frames.length],
-            114,
-            56,
-            (ETALASE_SCALE[s.id] ?? 1) * (use3DCard ? 1.04 : 1),
-            Math.sin(phase) * 2.4,
-            Math.sin(phase - 0.6) * 0.028
-          );
+          const want3D = !!(useMode3D && s.supports3D);
+          if (want3D) {
+            const arr = TILE_CANVASES_3D[s.id];
+            for (let fi = 1; fi < TILE_CYCLE.length; fi++) {
+              if (!arr || !arr[fi]) {
+                buildOne3DFrame(s, fi);
+                bakedAny = true;
+                break outer;
+              }
+            }
+          } else {
+            const arr = TILE_CANVASES_2D[s.id];
+            for (let fi = 1; fi < TILE_CYCLE.length; fi++) {
+              if (!arr || !arr[fi]) {
+                buildOne2DFrame(s, fi);
+                bakedAny = true;
+                break outer;
+              }
+            }
+          }
+        }
+      }
+
+      const baseStep = Math.floor(now / 135);
+      const isBiting = now < softBiteUntilRef.current;
+      const shouldDraw = bakedAny || isBiting || baseStep !== lastDrawStepRef.current;
+
+      if (shouldDraw) {
+        lastDrawStepRef.current = baseStep;
+
+        // Left Panel Hero Porthole 2D / softWebGL / loading-fallback canvas
+        const heroSkin = SKINS[activeIndex];
+        const heroUses3D = !!(useMode3D && heroSkin.supports3D);
+        if (isLoading || useSoft || !heroUses3D) {
+          const hcv = heroCanvasRef.current;
+          if (hcv !== lastHeroCanvasElRef.current) {
+            lastHeroCanvasElRef.current = hcv;
+            heroDrawnKeyRef.current = undefined;
+          }
+          const hHas3D = heroUses3D && !!TILE_CANVASES_3D[heroSkin.id]?.[0];
+          const hFrames = hHas3D ? TILE_CANVASES_3D[heroSkin.id] : TILE_CANVASES_2D[heroSkin.id];
+          if (hcv && hFrames) {
+            let hfIdx = 0;
+            if (isBiting) {
+              const biteSeq = [1, 2, 3, 0];
+              hfIdx = biteSeq[Math.floor(now / 95) % biteSeq.length];
+            } else {
+              hfIdx = baseStep % hFrames.length;
+            }
+            const hFrame = hFrames[hfIdx] || hFrames[0];
+            if (hFrame) {
+              const actualHf = hFrame === hFrames[0] && !hFrames[hfIdx] ? 0 : hfIdx;
+              const hKey = `${heroSkin.id}|${hHas3D ? 1 : 0}|${actualHf}`;
+              if (heroDrawnKeyRef.current !== hKey) {
+                heroDrawnKeyRef.current = hKey;
+                drawFishCanvas(hcv, hFrame, 240, 150, (TILE_SCALE[heroSkin.id] ?? 1) * (hHas3D ? 0.96 : 1), 1.5);
+              }
+            }
+          }
+        }
+
+        // Draw ONLY visible tiles in Right Panel Grid
+        if (!inUpgrade) {
+          for (const idx of visibleIndices) {
+            const s = SKINS[idx];
+            const cv = tileCanvasRefs.current[idx];
+            if (!cv) continue;
+            const use3DTile = !!(useMode3D && s.supports3D);
+            const has3D = use3DTile && !!TILE_CANVASES_3D[s.id]?.[0];
+            const frames = has3D ? TILE_CANVASES_3D[s.id] : TILE_CANVASES_2D[s.id];
+            if (!frames) continue;
+
+            let fIdx = 0;
+            if (isBiting && idx === activeIndex) {
+              const biteSeq = [1, 2, 3, 0];
+              fIdx = biteSeq[Math.floor(now / 95) % biteSeq.length];
+            } else {
+              fIdx = (baseStep + idx) % frames.length;
+            }
+            const frame = frames[fIdx] || frames[0];
+            if (!frame) continue;
+
+            const actualIdx = frame === frames[0] && !frames[fIdx] ? 0 : fIdx;
+            const drawKey = `${s.id}|${has3D ? 1 : 0}|${actualIdx}`;
+            if (drawnKeysRef.current[idx] !== drawKey) {
+              drawnKeysRef.current[idx] = drawKey;
+              drawFishCanvas(cv, frame, 132, 74, (TILE_SCALE[s.id] ?? 1) * (has3D ? 0.94 : 1), 1.3);
+            }
+          }
         }
       }
 
@@ -277,553 +497,565 @@ export default function Menu({ save, setSave, onPlay, onOpenTrophies, loading = 
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      clearTimeout(toastTimerRef.current);
+      clearTimeout(scrollIdleTimerRef.current);
     };
   }, []);
 
-  const coin = useMemo(() => coinURL(), []);
-
-  const pickSkin = (id: string) => setSave({ ...save, skin: id });
-
-  const pickRandomSkin = () => {
-    const others = SKINS.filter((s) => s.id !== save.skin);
-    const next = others[Math.floor(Math.random() * others.length)] || SKINS[0];
-    setSave({ ...save, skin: next.id });
+  const handleGridScroll = () => {
+    const scroller = gridScrollRef.current;
+    if (scroller) scrollTopRef.current = scroller.scrollTop;
+    isScrollingRef.current = true;
+    clearTimeout(scrollIdleTimerRef.current);
+    scrollIdleTimerRef.current = window.setTimeout(() => {
+      isScrollingRef.current = false;
+      lastDrawStepRef.current = -1;
+    }, 100);
   };
-
-  const buyUp = (id: keyof Upgrades) => {
-    const lv = save.upgrades[id];
-    if (lv >= MAX_UPGRADE) return;
-    const cost = UPGRADE_COSTS[lv];
-    if (save.coins < cost) return;
-    setSave({ ...save, coins: save.coins - cost, upgrades: { ...save.upgrades, [id]: lv + 1 } });
-  };
-
-  const titleChars = [
-    { ch: "F", isIo: false, delay: "0s" },
-    { ch: "i", isIo: false, delay: "0.1s" },
-    { ch: "s", isIo: false, delay: "0.2s" },
-    { ch: "h", isIo: false, delay: "0.3s" },
-    { ch: ".", isIo: true, delay: "0.4s" },
-    { ch: "i", isIo: true, delay: "0.5s" },
-    { ch: "o", isIo: true, delay: "0.6s" },
-  ];
 
   return (
-    <div
-      className="absolute inset-0 flex overflow-y-auto p-3 sm:p-4 clean-font"
-      style={{
-        background:
-          "radial-gradient(ellipse at 50% 24%, rgba(34, 211, 238, 0.14) 0%, rgba(6, 26, 62, 0.34) 55%, rgba(3, 12, 34, 0.64) 100%)",
-      }}
-    >
-      {/* Subtle floating ambient underwater bubbles */}
-      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
-        <div className="float-bubble-a absolute left-[6%] bottom-[16%] w-4 h-4 rounded-full border border-cyan-200/55 bg-cyan-300/15" />
-        <div className="float-bubble-b absolute left-[11%] bottom-[28%] w-2.5 h-2.5 rounded-full border border-white/50 bg-white/15" />
-        <div className="float-bubble-c absolute right-[8%] bottom-[20%] w-5 h-5 rounded-full border border-cyan-200/50 bg-cyan-200/15" />
-        <div className="float-bubble-a absolute right-[14%] bottom-[34%] w-3 h-3 rounded-full border border-sky-200/55 bg-sky-300/15" />
-      </div>
+    <div className="absolute inset-0 z-10 flex items-center justify-center p-2 sm:p-3.5 overflow-hidden select-none pointer-events-none">
+      {/* Dual Carved Wooden Arcade Shell (Original 2-Panel Layout, Zero Bottom Cropping) */}
+      <div className="pointer-events-auto w-full max-w-[1220px] h-full max-h-[705px] grid grid-cols-1 lg:grid-cols-[380px_1fr] xl:grid-cols-[412px_1fr] gap-2.5 sm:gap-3.5 min-h-0 overflow-y-auto lg:overflow-hidden">
+        {/* ================= LEFT WOODEN PANEL: LOGO, HERO PORTHOLE & PLAY ================= */}
+        <section
+          aria-label="Panel Pemain & Pratinjau Ikan"
+          className="artistic-wood-board relative p-3.5 sm:p-4 flex flex-col justify-between gap-2 min-h-0 lg:h-full overflow-hidden"
+        >
+          <CornerRivets />
 
-      <div className="m-auto w-full max-w-[1140px] flex flex-col items-center gap-2.5 py-1 relative z-10">
-        {/* ============ FESTIVE WOOD + .IO OCEAN ARCADE HEADER ============ */}
-        <header className="relative text-center select-none flex flex-col items-center">
-          <div
-            className="sun-halo-spin pointer-events-none -top-10 absolute w-[360px] sm:w-[490px] h-[160px] rounded-full opacity-60"
-            style={{
-              background:
-                "repeating-conic-gradient(from 0deg, rgba(135, 245, 255, 0.25) 0deg 9deg, transparent 9deg 24deg)",
-              WebkitMaskImage: "radial-gradient(ellipse at center, black 20%, transparent 72%)",
-              maskImage: "radial-gradient(ellipse at center, black 20%, transparent 72%)",
-            }}
-          />
+          {/* 1. Classic Animated Feeding Frenzy Wordmark */}
+          <header className="relative z-10 flex flex-col items-center text-center pt-0.5 shrink-0">
+            <div className="flex items-center justify-center gap-1.5">
+              {/* Mascot Clownfish */}
+              <svg className="mascot-wiggle w-8 h-8 sm:w-9 sm:h-9 shrink-0 drop-shadow-[0_3px_4px_rgba(0,0,0,0.65)]" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                <path d="M14 32C14 21 25 14 38 16C46 17 52 24 54 32C52 40 46 47 38 48C25 50 14 43 14 32Z" fill="#FF6B1A" stroke="#231004" strokeWidth="2.5" />
+                <path d="M27 15.5C29 22 29 42 27 48.5C30 48.8 33 48.5 35 48C37 41 37 23 35 16C33 15.5 30 15.2 27 15.5Z" fill="#FFFFFF" />
+                <path d="M41 17.5C42.5 23 42.5 41 41 46.5C43 45.8 45 44.5 46.5 43C47.5 37 47.5 27 46.5 21C45 19.5 43 18.2 41 17.5Z" fill="#FFFFFF" />
+                <path d="M15 32L5 22V42L15 32Z" fill="#FF6B1A" stroke="#231004" strokeWidth="2.5" strokeLinejoin="round" />
+                <circle cx="46" cy="28" r="3.2" fill="#0F172A" />
+                <circle cx="47" cy="27" r="1.1" fill="#FFFFFF" />
+              </svg>
 
-          <div className="relative inline-flex items-center justify-center px-12 sm:px-16">
-            {/* Left Darting Orange Clownfish Mascot */}
-            <svg
-              viewBox="0 0 60 36"
-              className="mascot-wiggle pointer-events-none absolute -left-1 sm:left-0 top-1 sm:top-2 w-10 h-6 sm:w-13 sm:h-8 drop-shadow-[0_4px_6px_rgba(0,0,0,0.65)]"
-            >
-              <path className="mascot-tail" d="M16,18 L3,8 L7,18 L3,28 Z" fill="#ff7d14" stroke="#1e0b02" strokeWidth="2.5" strokeLinejoin="round" />
-              <path d="M14,18 C16,7 38,5 54,18 C38,31 16,29 14,18 Z" fill="#ff841a" stroke="#1e0b02" strokeWidth="2.6" />
-              <path d="M27,9 C25,18 25,21 27,27" fill="none" stroke="#ffffff" strokeWidth="3.6" />
-              <path d="M38,9 C36,18 36,21 38,27" fill="none" stroke="#ffffff" strokeWidth="3.2" />
-              <g className="mascot-eye">
-                <circle cx="45" cy="15" r="4" fill="#ffffff" stroke="#1e0b02" strokeWidth="1.8" />
-                <circle cx="46.2" cy="15" r="2" fill="#121c36" />
-                <circle cx="45.6" cy="14" r="0.8" fill="#ffffff" />
-              </g>
-              <path d="M47,20 Q51,22 54,19" fill="none" stroke="#1e0b02" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-
-            <h1 className="font-extrabold text-[52px] sm:text-[74px] md:text-[86px] leading-none tracking-tight flex items-baseline">
-              {titleChars.map((item, idx) => (
-                <span
-                  key={idx}
-                  className={`fish-letter ${item.isIo ? "fish-word-io" : "fish-word-gold"}`}
-                  style={{ animationDelay: item.delay }}
-                >
-                  {item.ch}
+              <h1 className="font-display text-[36px] sm:text-[42px] font-extrabold leading-none tracking-tight flex items-baseline">
+                <span className="fish-word-gold">
+                  {["F", "i", "s", "h"].map((ch, i) => (
+                    <span key={i} className="fish-letter" style={{ animationDelay: `${i * 0.14}s` }}>
+                      {ch}
+                    </span>
+                  ))}
                 </span>
-              ))}
-            </h1>
-
-            {/* Right Balancing Blue Tang Mascot */}
-            <svg
-              viewBox="0 0 54 34"
-              className="bob pointer-events-none absolute -right-1 sm:right-0 bottom-1.5 sm:bottom-2 w-9 h-6 sm:w-12 sm:h-7 drop-shadow-[0_4px_6px_rgba(0,0,0,0.65)]"
-              style={{ transform: "scaleX(-1)" }}
-            >
-              <path className="mascot-tail" d="M15,17 L2,8 L5,17 L2,26 Z" fill="#fde047" stroke="#082f49" strokeWidth="2.3" strokeLinejoin="round" />
-              <path d="M13,17 C15,6 37,5 50,17 C37,29 15,28 13,17 Z" fill="#0ea5e9" stroke="#082f49" strokeWidth="2.4" />
-              <path d="M22,12 C28,15 28,19 22,22" fill="none" stroke="#0f172a" strokeWidth="3.2" strokeLinecap="round" />
-              <circle cx="41" cy="14.5" r="3.6" fill="#ffffff" stroke="#082f49" strokeWidth="1.6" />
-              <circle cx="42" cy="14.5" r="1.8" fill="#082f49" />
-            </svg>
-          </div>
-
-          {/* Carved Wood & Gold Nautical Ribbon Plaque */}
-          <div className="relative -mt-1 z-10">
-            <div className="badge-glow relative overflow-hidden ui-sheen px-6 sm:px-10 py-1 rounded-full bg-[#361b08]/95 border-[2.5px] border-[#e8a645] shadow-[0_6px_16px_rgba(0,0,0,0.65)] flex items-center gap-3">
-              <span className="text-sky-300 text-[13px] sm:text-[14px]">⚓</span>
-              <span className="font-extrabold text-[12px] sm:text-[14px] tracking-[0.12em] text-white uppercase drop-shadow-[0_2px_2px_rgba(0,0,0,0.9)]">
-                LAUTAN BERLAPIS · FEEDING FRENZY
-              </span>
-              <span className="text-sky-300 text-[13px] sm:text-[14px]">⚓</span>
+                <span className="fish-word-io">
+                  {[".", "i", "o"].map((ch, i) => (
+                    <span key={i} className="fish-letter" style={{ animationDelay: `${(i + 4) * 0.14}s` }}>
+                      {ch}
+                    </span>
+                  ))}
+                </span>
+              </h1>
             </div>
-          </div>
 
-          <p className="text-outline font-bold text-[13px] sm:text-[14.5px] mt-1 text-cyan-50 max-w-[700px]">
-            Sedot kawanan ikan kecil untuk <span className="text-yellow-300">COMBO</span> beruntun &amp; hujan koin — habiskan gerombolan untuk bonus{" "}
-            <span className="text-emerald-300">SAPU BERSIH!</span>
-          </p>
-        </header>
+            <div className="text-[10px] font-extrabold tracking-[0.2em] uppercase text-amber-200/90 text-outline mt-0.5">
+              ⚓ LAUTAN BERLAPIS · FEEDING FRENZY
+            </div>
 
-        {/* ============ TWO-PANEL CARVED NAUTICAL WOODEN .IO BOARDS ============ */}
-        <div className="flex flex-col lg:flex-row gap-4 w-full items-stretch">
-          {/* LEFT WOODEN BOARD: Luminous Lagoon Hero Porthole & Play Launcher */}
-          <section className="artistic-wood-board relative p-4 sm:p-5 flex-1 flex flex-col items-center justify-between gap-2.5">
-            {/* Decorative Swaying Corals */}
-            <svg viewBox="0 0 36 42" className="coral-sway pointer-events-none absolute -top-5 -left-3 w-8 h-9 drop-shadow-[0_3px_4px_rgba(0,0,0,0.5)]">
-              <path d="M18,40 L18,22 M18,28 C12,24 9,17 11,10 M18,23 C25,19 28,12 25,6 M14,19 C10,16 6,17 5,13" fill="none" stroke="#ff6b2b" strokeWidth="4.5" strokeLinecap="round" />
-              <path d="M18,40 L18,22 M18,28 C12,24 9,17 11,10 M18,23 C25,19 28,12 25,6" fill="none" stroke="#ffbe4f" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
-            <svg viewBox="0 0 36 42" className="coral-sway-r pointer-events-none absolute -top-5 -right-3 w-8 h-9 drop-shadow-[0_3px_4px_rgba(0,0,0,0.5)]">
-              <path d="M18,40 L18,20 M18,27 C11,22 8,15 11,8 M18,22 C24,18 28,13 26,6" fill="none" stroke="#a644e8" strokeWidth="4.5" strokeLinecap="round" />
-              <path d="M18,40 L18,20 M18,27 C11,22 8,15 11,8 M18,22 C24,18 28,13 26,6" fill="none" stroke="#eab8ff" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-
-            {/* Nautical Brass Screws */}
-            <div className="absolute top-2.5 left-2.5 w-3 h-3 rounded-full bg-[#e3ab4b] border border-[#3b1d06] shadow-sm flex items-center justify-center text-[7px] text-[#4d2808]">✕</div>
-            <div className="absolute top-2.5 right-2.5 w-3 h-3 rounded-full bg-[#e3ab4b] border border-[#3b1d06] shadow-sm flex items-center justify-center text-[7px] text-[#4d2808]">✕</div>
-            <div className="absolute bottom-2.5 left-2.5 w-3 h-3 rounded-full bg-[#e3ab4b] border border-[#3b1d06] shadow-sm flex items-center justify-center text-[7px] text-[#4d2808]">✕</div>
-            <div className="absolute bottom-2.5 right-2.5 w-3 h-3 rounded-full bg-[#e3ab4b] border border-[#3b1d06] shadow-sm flex items-center justify-center text-[7px] text-[#4d2808]">✕</div>
-
-            {/* Luminous Lagoon Porthole Spotlight inside the Wooden Frame */}
-            <div className="w-full flex flex-col items-center gap-1.5">
-              <div className="wood-lagoon-porthole relative w-full py-2 px-4 flex flex-col items-center justify-center overflow-hidden">
-                <div className="caustic-pedestal absolute bottom-2 w-36 h-4 rounded-full bg-gradient-to-r from-transparent via-cyan-300/55 to-transparent blur-[3px]" />
-                {heroIs3D ? (
-                  <div className="relative z-10 w-[224px] h-[124px] flex items-center justify-center">
-                    <Fish3DViewport species={heroSpecies} onBiteCount={biteTrig} />
-                  </div>
-                ) : (
-                  <div className="relative z-10 w-[208px] h-[112px] flex items-center justify-center">
-                    <canvas
-                      ref={heroCanvasRef}
-                      aria-label={cur.name}
-                      className="w-[208px] h-[112px] block drop-shadow-[0_10px_16px_rgba(0,0,0,0.68)]"
-                    />
-                  </div>
-                )}
+            {save.equippedTitle && (
+              <div className="mt-1 px-2.5 py-0.5 rounded-md ff-carved-slot text-[11px] font-extrabold text-yellow-300 truncate max-w-full">
+                👑 Julukan: « {save.equippedTitle} »
               </div>
+            )}
+          </header>
 
-              <div className="text-center flex flex-wrap items-center justify-center gap-1.5 text-outline">
-                <span className="text-[20px] sm:text-[21px] font-extrabold text-white">{cur.name}</span>
-                <span className="text-yellow-300 font-bold text-[14px]">· {cur.subtitle}</span>
-                {cur.rare && (
-                  <span className="px-2 py-0.5 rounded bg-gradient-to-r from-amber-400 via-yellow-300 to-fuchsia-400 text-[#2b103f] font-black text-[11px] tracking-wider shadow-[0_1px_6px_rgba(255,215,90,0.6)]">
-                    ★ LANGKA
-                  </span>
-                )}
-              </div>
+          {/* 2. Deep Lagoon Porthole showcasing Active Fish */}
+          <div
+            onClick={() => {
+              if (!showLiveHero3D) triggerTestBite();
+            }}
+            className="wood-lagoon-porthole relative w-full flex-1 min-h-[140px] max-h-[205px] overflow-hidden flex items-center justify-center"
+          >
+            {/* Sunburst halo */}
+            <div
+              className="sun-halo-spin pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-56 h-56 rounded-full opacity-40"
+              style={{
+                background: "repeating-conic-gradient(from 0deg, rgba(186, 230, 253, 0.24) 0deg 10deg, transparent 10deg 26deg)",
+                WebkitMaskImage: "radial-gradient(circle, black 16%, transparent 68%)",
+                maskImage: "radial-gradient(circle, black 16%, transparent 68%)",
+              }}
+              aria-hidden="true"
+            />
+
+            {/* Swaying corner kelp silhouettes inside porthole */}
+            <svg viewBox="0 0 60 80" className="coral-sway pointer-events-none absolute -bottom-1 left-2 w-10 h-14 opacity-50" aria-hidden="true">
+              <path d="M18,80 C14,60 28,48 20,26 C26,38 30,52 25,80 Z" fill="#0d9488" />
+              <path d="M32,80 C34,62 44,52 40,34 C46,48 44,64 38,80 Z" fill="#14b8a6" />
+            </svg>
+            <svg viewBox="0 0 60 80" className="coral-sway-r pointer-events-none absolute -bottom-1 right-2 w-10 h-14 opacity-50" aria-hidden="true">
+              <path d="M40,80 C44,60 30,48 38,26 C32,38 28,52 33,80 Z" fill="#f97316" />
+              <path d="M26,80 C24,62 14,52 18,34 C12,48 14,64 20,80 Z" fill="#fb923c" />
+            </svg>
+
+            {/* Floating subtle bubbles */}
+            <span className="float-bubble-a pointer-events-none absolute left-7 bottom-6 w-2.5 h-2.5 rounded-full border border-cyan-100/70 bg-cyan-200/20" aria-hidden="true" />
+            <span className="float-bubble-b pointer-events-none absolute right-8 bottom-8 w-2 h-2 rounded-full border border-cyan-100/65 bg-cyan-200/20" aria-hidden="true" />
+
+            {/* Top Badges */}
+            <div className="pointer-events-none absolute top-2 left-2.5 right-2.5 z-20 flex items-center justify-between gap-1.5">
+              {cur.rare ? (
+                <span className="badge-langka px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider text-white border border-amber-200/40">
+                  ★ LANGKA
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-md bg-slate-950/55 border border-cyan-300/30 text-[10px] font-bold uppercase tracking-wider text-cyan-100">
+                  UMUM
+                </span>
+              )}
 
               {cur.supports3D && (
-                <div className="flex items-center justify-center gap-2 flex-wrap">
-                  <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-[#221206] border border-[#6e3f18]">
-                    <button
-                      type="button"
-                      onClick={() => setSave({ ...save, mode3D: false })}
-                      className={`px-3 py-1 rounded-md text-[12px] font-extrabold cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
-                        !save.mode3D
-                          ? "bg-amber-400 text-[#281204] shadow-sm"
-                          : "text-amber-100/80 hover:text-white"
-                      }`}
-                    >
-                      Ikan 2D
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSave({ ...save, mode3D: true })}
-                      className={`px-3 py-1 rounded-md text-[12px] font-extrabold cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
-                        save.mode3D
-                          ? "bg-cyan-400 text-[#071f33] shadow-sm"
-                          : "text-cyan-100/85 hover:text-white"
-                      }`}
-                    >
-                      Ikan 3D
-                    </button>
-                  </div>
-                  {heroIs3D && (
-                    <button
-                      type="button"
-                      onClick={() => setBiteTrig((c) => c + 1)}
-                      className="px-3 py-1 rounded-lg bg-[#144363] hover:bg-[#1b5a85] border border-cyan-300/45 text-[12px] font-extrabold text-cyan-100 cursor-pointer whitespace-nowrap shrink-0 shadow-sm"
-                    >
-                      Tes Makan 3D
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Environment Corals & Large Rocks Mode (Default 3D with 2D option) */}
-              <div className="flex items-center justify-center gap-2 flex-wrap">
-                <span className="text-[11.5px] font-bold text-amber-200/90">🪸 Karang &amp; Batu:</span>
-                <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-[#221206] border border-[#6e3f18]">
-                  <button
-                    type="button"
-                    onClick={() => setSave({ ...save, reef3D: true })}
-                    className={`px-2.5 py-0.5 rounded-md text-[11.5px] font-extrabold cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
-                      save.reef3D
-                        ? "bg-cyan-400 text-[#071f33] shadow-sm"
-                        : "text-cyan-100/85 hover:text-white"
-                    }`}
-                  >
-                    3D (Default)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSave({ ...save, reef3D: false })}
-                    className={`px-2.5 py-0.5 rounded-md text-[11.5px] font-extrabold cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
-                      !save.reef3D
-                        ? "bg-amber-400 text-[#281204] shadow-sm"
-                        : "text-amber-100/80 hover:text-white"
-                    }`}
-                  >
-                    2D
-                  </button>
-                </div>
-              </div>
-
-              {save.equippedTitle && (
-                <div className="ff-carved-slot px-3.5 py-0.5 text-[12px] font-extrabold tracking-wide text-yellow-300 border-amber-400/60 shadow-sm">
-                  👑 Julukan: « {save.equippedTitle} »
-                </div>
+                <span
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider border ${
+                    save.mode3D
+                      ? "bg-cyan-400 text-[#052038] border-white/60 shadow-sm"
+                      : "bg-slate-950/60 text-cyan-200 border-cyan-300/35"
+                  }`}
+                >
+                  {save.mode3D ? "3D LIVE" : "2D KLASIK"}
+                </span>
               )}
             </div>
 
-            {/* Carved Wood Nickname Slot + Big Emerald Play Button + Koleksi Piagam */}
-            <div className="w-full flex flex-col gap-2">
-              <div className="relative w-full">
-                <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[15px] opacity-85">🏷️</span>
-                <input
-                  value={save.name}
-                  maxLength={14}
-                  onChange={(e) => setSave({ ...save, name: e.target.value })}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") onPlay();
-                  }}
-                  placeholder="Ketik nama ikanmu..."
-                  aria-label="Nama ikan"
-                  className="w-full font-bold text-[16px] text-center py-2.5 px-9 rounded-xl bg-[#221206] text-amber-50 border-2 border-[#6e3f18] outline-none focus-visible:ring-2 focus-visible:ring-yellow-300 focus:border-yellow-300 placeholder:text-amber-200/45 shadow-inner transition-all"
+            {/* Single Persistent 3D Hero Viewport OR Animated 2D Canvas */}
+            {showLiveHero3D ? (
+              <div className="relative z-10 w-full h-full">
+                <Fish3DViewport species={heroSpecies} onBiteCount={biteTrig} paused={paused} interactive={true} />
+              </div>
+            ) : (
+              <div className="relative z-10 bob w-[240px] h-[150px] flex items-center justify-center cursor-pointer">
+                <canvas
+                  ref={heroCanvasRef}
+                  aria-label={cur.name}
+                  className="w-[240px] h-[150px] block drop-shadow-[0_10px_14px_rgba(0,0,0,0.6)]"
                 />
               </div>
+            )}
 
+            {/* Subtle interaction hint inside porthole bottom */}
+            <div className="pointer-events-none absolute bottom-1.5 inset-x-0 text-center z-20">
+              <span className="text-[9.5px] font-bold text-cyan-100/75 text-outline">
+                {showLiveHero3D ? "Seret untuk putar 3D · Klik untuk tes gigit" : "Klik ikan untuk tes animasi makan"}
+              </span>
+            </div>
+          </div>
+
+          {/* 3. Active Fish Nameplate + Quick Mode Toggles */}
+          <div className="relative z-10 flex flex-col gap-1.5 shrink-0">
+            <div className="artistic-inset px-3 py-1.5 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[17px] sm:text-[19px] font-extrabold text-amber-100 text-outline leading-tight truncate">
+                  {cur.name}
+                </div>
+                <div className="text-[11px] font-semibold text-cyan-200/95 truncate">{cur.subtitle}</div>
+              </div>
               <button
-                onClick={onPlay}
-                className={`ui-btn ui-sheen relative overflow-hidden w-full min-h-[54px] py-3.5 text-[22px] text-white tracking-wide ${loading ? "" : "play-btn-pulse"}`}
+                type="button"
+                onClick={triggerTestBite}
+                className="ui-btn px-2.5 py-1 text-[11px] text-white shrink-0 whitespace-nowrap"
+                style={{ background: "linear-gradient(180deg, #06b6d4 0%, #0369a1 100%)" }}
+                title="Lihat animasi gigitan ikan"
+              >
+                🍖 Tes Makan
+              </button>
+            </div>
+
+            {/* Compact 2D/3D Fish + Reef 3D/2D Toggles */}
+            <div className="flex items-center justify-between gap-1.5 flex-wrap">
+              {cur.supports3D && (
+                <div className="ff-carved-slot p-0.5 flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setSave({ ...save, mode3D: false })}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-extrabold cursor-pointer transition-colors whitespace-nowrap ${
+                      !save.mode3D ? "bg-amber-400 text-[#231004] shadow-sm" : "text-amber-100/75 hover:text-white"
+                    }`}
+                  >
+                    Ikan 2D
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSave({ ...save, mode3D: true })}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-extrabold cursor-pointer transition-colors whitespace-nowrap ${
+                      save.mode3D ? "bg-cyan-300 text-[#052038] shadow-sm" : "text-amber-100/75 hover:text-white"
+                    }`}
+                  >
+                    Ikan 3D
+                  </button>
+                </div>
+              )}
+
+              <div className="ff-carved-slot p-0.5 flex items-center gap-0.5 ml-auto">
+                <span className="text-[10.5px] font-bold text-amber-200/80 pl-1.5 pr-1">🪸 Karang:</span>
+                <button
+                  type="button"
+                  onClick={() => setSave({ ...save, reef3D: true })}
+                  className={`px-2 py-1 rounded-md text-[11px] font-extrabold cursor-pointer transition-colors ${
+                    save.reef3D ? "bg-cyan-300 text-[#052038] shadow-sm" : "text-amber-100/75 hover:text-white"
+                  }`}
+                >
+                  3D
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSave({ ...save, reef3D: false })}
+                  className={`px-2 py-1 rounded-md text-[11px] font-extrabold cursor-pointer transition-colors ${
+                    !save.reef3D ? "bg-amber-400 text-[#231004] shadow-sm" : "text-amber-100/75 hover:text-white"
+                  }`}
+                >
+                  2D
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* 4. Name Input + Speed Selector */}
+          <div className="relative z-10 flex flex-col gap-1.5 shrink-0">
+            <div className="ff-carved-slot px-3 py-1.5 flex items-center gap-2 focus-within:border-amber-300/70">
+              <span className="text-xs" aria-hidden="true">
+                🏷️
+              </span>
+              <input
+                type="text"
+                value={save.name}
+                maxLength={14}
+                onChange={(e) => setSave({ ...save, name: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") onPlay(cur.id);
+                }}
+                placeholder="Nama ikanmu..."
+                aria-label="Nama ikan"
+                className="bg-transparent border-none outline-none text-amber-50 font-extrabold text-[13.5px] w-full placeholder-amber-200/45"
+              />
+            </div>
+
+            <div className="ff-carved-slot px-2.5 py-1 flex items-center justify-between gap-1.5">
+              <span className="text-[11px] font-extrabold text-amber-200/90 flex items-center gap-1 shrink-0">
+                <span aria-hidden="true">⚡</span>
+                <span>Kecepatan</span>
+              </span>
+              <div className="flex items-center gap-1">
+                {[0.8, 1.0, 1.3, 1.6].map((val) => {
+                  const active = Math.abs(save.speedPref - val) < 0.05;
+                  return (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setSave({ ...save, speedPref: val })}
+                      className={`px-2 py-0.5 rounded-md text-[11px] font-extrabold cursor-pointer transition-colors tabular-nums ${
+                        active ? "bg-amber-400 text-[#231004] shadow-sm" : "text-amber-100/75 hover:text-white"
+                      }`}
+                    >
+                      {val.toFixed(1)}x
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* 5. Primary Carved Emerald Play Button */}
+          <button
+            type="button"
+            onClick={() => onPlay(cur.id)}
+            className={`ui-btn ui-sheen ${loading ? "" : "play-btn-pulse"} relative overflow-hidden w-full py-2.5 sm:py-3 text-[17px] sm:text-[18.5px] text-white tracking-wide flex items-center justify-center gap-2 shrink-0`}
+            style={{
+              background: loading
+                ? "linear-gradient(180deg, #3c785c 0%, #244f3c 100%)"
+                : "linear-gradient(180deg, #4be880 0%, #1ba248 100%)",
+            }}
+          >
+            {loading && (
+              <span
+                className="absolute inset-y-0 left-0 bg-emerald-400/55 transition-all duration-150"
+                style={{ width: `${Math.round(loadPct * 100)}%` }}
+              />
+            )}
+            <svg className="relative w-5 h-5 fill-current shrink-0 drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+            <span className="relative drop-shadow-[0_2px_2px_rgba(0,0,0,0.65)]">
+              {loading
+                ? `${
+                    loadPct < 0.22
+                      ? "MENUMBUHKAN KARANG…"
+                      : loadPct < 0.49
+                        ? "MEMAHAT DUNIA LAUT…"
+                        : loadPct < 0.88
+                          ? "MENATA TERUMBU & GUA…"
+                          : loadPct < 0.99
+                            ? "MENYIAPKAN DASAR LAUT…"
+                            : "MELEPAS IKAN…"
+                  } ${Math.round(loadPct * 100)}%`
+                : "MAIN SEKARANG!"}
+            </span>
+          </button>
+
+          {/* 6. Compact Footer Legend & Highscore */}
+          <div className="relative z-10 flex items-center justify-between gap-2 text-[10.5px] font-bold text-amber-100/85 pt-0.5 shrink-0">
+            <span className="truncate">🖱️ Kursor · Kiri: Sedot · Kanan: Boost</span>
+            <span className="shrink-0 tabular-nums text-yellow-300">
+              🏆 {save.best > 0 ? save.best.toLocaleString("en-US") : "Rekor: 0"}
+            </span>
+          </div>
+        </section>
+
+        {/* ================= RIGHT WOODEN PANEL: TABS, 4-COLUMN WOODEN FISH ETALASE & UPGRADES ================= */}
+        <section
+          aria-label="Etalase Pilihan Ikan & Upgrade"
+          className="artistic-wood-board relative p-3.5 sm:p-4 flex flex-col gap-2.5 min-h-[420px] lg:min-h-0 lg:h-full overflow-hidden"
+        >
+          <CornerRivets />
+
+          {/* 1. Classic Top Wooden Tab Bar + Acak Ikan + Coin Counter */}
+          <header className="relative z-10 flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-amber-200/15 shrink-0">
+            <nav className="flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setShowUpgrade(false)}
+                className="ui-btn px-3 py-1.5 min-h-[36px] text-[12px] sm:text-[13px] text-white flex items-center gap-1.5 whitespace-nowrap"
                 style={{
-                  background: loading
-                    ? "linear-gradient(180deg, #3f8a62, #246342)"
-                    : "linear-gradient(180deg, #4be880 0%, #1ba248 100%)",
+                  background: !showUpgrade ? "linear-gradient(180deg, #ff9938 0%, #d95b12 100%)" : "#4d2c14",
                 }}
               >
-                {loading && (
-                  <span
-                    className="absolute inset-y-0 left-0"
-                    style={{ width: `${Math.round(loadPct * 100)}%`, background: "linear-gradient(180deg, #45e078, #1fa84d)", opacity: 0.85 }}
-                  />
-                )}
-                <span className="relative drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)] font-extrabold">
-                  {loading ? `Menyiapkan lautan… ${Math.round(loadPct * 100)}%` : "▶ MAIN SEKARANG!"}
-                </span>
+                <span aria-hidden="true">🐠</span>
+                <span>IKAN FRENZY ({SKINS.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowUpgrade(true)}
+                className="ui-btn px-3 py-1.5 min-h-[36px] text-[12px] sm:text-[13px] text-white flex items-center gap-1.5 whitespace-nowrap"
+                style={{
+                  background: showUpgrade ? "linear-gradient(180deg, #ff9938 0%, #d95b12 100%)" : "#4d2c14",
+                }}
+              >
+                <span aria-hidden="true">⚡</span>
+                <span>UPGRADE</span>
               </button>
 
               <button
                 type="button"
                 onClick={onOpenTrophies}
-                className="ui-btn ui-sheen relative overflow-hidden w-full min-h-[44px] py-2 px-4 flex items-center justify-between gap-2 text-white whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-200"
-                style={{
-                  background: "linear-gradient(180deg, #f59e0b 0%, #b45309 100%)",
-                }}
+                className="ui-btn px-3 py-1.5 min-h-[36px] text-[12px] sm:text-[13px] text-amber-100 flex items-center gap-1.5 whitespace-nowrap"
+                style={{ background: "linear-gradient(180deg, #6d3d19 0%, #48270e 100%)" }}
               >
-                <span className="relative flex items-center gap-2 text-[14.5px] font-extrabold drop-shadow-[0_1.5px_2px_rgba(0,0,0,0.65)]">
-                  <span aria-hidden="true">🏅</span>
-                  <span>KOLEKSI PIAGAM &amp; JULUKAN</span>
-                </span>
-                <span className="relative px-2 py-0.5 rounded-md bg-[#2b1405]/80 border border-amber-200/40 text-[12px] font-extrabold text-yellow-200 tabular-nums">
-                  {unlockedTrophyCount}/{TROPHIES.length}
+                <span aria-hidden="true">🏅</span>
+                <span>
+                  PIAGAM{" "}
+                  <span className="text-yellow-300 tabular-nums">
+                    ({unlockedTrophyCount}/{TROPHIES.length})
+                  </span>
                 </span>
               </button>
-            </div>
+            </nav>
 
-            {/* Compact Speed Presets inside Dark Carved Slot */}
-            <div className="w-full artistic-inset px-3.5 py-2.5 flex flex-col gap-1.5">
-              <div className="flex items-center justify-between text-[13px] font-bold text-amber-100">
-                <span>⚡ Kecepatan Ikan</span>
-                <span className="text-yellow-300 font-extrabold tabular-nums">{save.speedPref.toFixed(1)}x</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min={0.7}
-                  max={1.8}
-                  step={0.1}
-                  value={save.speedPref}
-                  aria-label="Kecepatan ikan"
-                  onChange={(e) => setSave({ ...save, speedPref: parseFloat(e.target.value) })}
-                  className="flex-1 accent-amber-400 cursor-pointer h-1.5"
-                />
-                <div className="flex gap-1 shrink-0">
-                  {[
-                    { label: "0.8x", val: 0.8 },
-                    { label: "1.0x", val: 1.0 },
-                    { label: "1.3x", val: 1.3 },
-                    { label: "1.6x", val: 1.6 },
-                  ].map((p) => {
-                    const active = Math.abs(save.speedPref - p.val) < 0.05;
-                    return (
-                      <button
-                        key={p.val}
-                        onClick={() => setSave({ ...save, speedPref: p.val })}
-                        className={`px-2 py-0.5 rounded text-[12px] font-bold cursor-pointer transition-colors whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-300 ${
-                          active
-                            ? "bg-amber-400 text-[#281204]"
-                            : "bg-[#3d210d] text-amber-100/85 hover:bg-[#573014]"
-                        }`}
-                      >
-                        {p.label}
-                      </button>
-                    );
-                  })}
-                </div>
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                type="button"
+                onClick={pickRandomSkin}
+                title="Pilih Ikan Acak"
+                className="ui-btn px-3 py-1.5 min-h-[36px] text-[12px] sm:text-[13px] text-white flex items-center gap-1.5 whitespace-nowrap"
+                style={{ background: "linear-gradient(180deg, #3292bc 0%, #1a587a 100%)" }}
+              >
+                <span aria-hidden="true">🎲</span>
+                <span>Acak ikan</span>
+              </button>
+
+              <div className="ff-carved-slot px-3 h-[36px] flex items-center gap-1.5 shrink-0" title="Koin Milikmu">
+                <img src={coin} className="w-5 h-5 shrink-0" alt="Koin" />
+                <span className="font-extrabold text-[15px] text-yellow-300 tabular-nums leading-none">
+                  {save.coins.toLocaleString("en-US")}
+                </span>
               </div>
             </div>
+          </header>
 
-            <div className="text-[13px] leading-relaxed text-amber-50 text-center font-medium w-full">
-              <span className="text-white font-bold">Kursor</span> Berenang
-              <span aria-hidden="true" className="mx-1.5 text-amber-300">·</span>
-              <span className="text-cyan-300 font-bold">Klik Kiri / Spasi</span> Sedot
-              <span aria-hidden="true" className="mx-1.5 text-amber-300">·</span>
-              <span className="text-yellow-300 font-bold">Klik Kanan / Shift</span> Boost
-            </div>
+          {/* 2. Original 4-Column Scrollable Wooden Etalase Grid (Full Height, Zero Bottom Crop!) */}
+          {!showUpgrade ? (
+            <div
+              ref={gridScrollRef}
+              onScroll={handleGridScroll}
+              className="relative z-10 flex-1 min-h-0 overflow-y-auto wood-scroll pr-1.5 pb-1"
+            >
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                {SKINS.map((s, idx) => {
+                  const isActive = s.id === cur.id;
+                  const tileClass = isActive
+                    ? "wood-fish-tile-active"
+                    : s.rare
+                      ? "wood-fish-tile wood-fish-tile-rare"
+                      : "wood-fish-tile";
+                  const windowClass = s.rare
+                    ? "etalase-lagoon-window etalase-lagoon-window-rare"
+                    : "etalase-lagoon-window";
 
-            {save.best > 0 && (
-              <div className="text-[15px] font-bold text-yellow-200 text-outline tabular-nums">
-                🏆 Skor Rekor: {save.best.toLocaleString("en-US")}
-              </div>
-            )}
-          </section>
-
-          {/* RIGHT WOODEN BOARD: Ocean-Lit Fish Etalase & Upgrade Workshop */}
-          <section className="artistic-wood-board relative p-4 sm:p-5 flex-[1.52] min-w-0 flex flex-col gap-3">
-            {/* Decorative Swaying Sea Fan Coral */}
-            <svg viewBox="0 0 36 42" className="coral-sway-r pointer-events-none absolute -top-5 -right-3 w-8 h-9 drop-shadow-[0_3px_4px_rgba(0,0,0,0.5)]">
-              <path d="M18,40 L18,22 M18,28 C12,24 9,17 11,10 M18,23 C25,19 28,12 25,6" fill="none" stroke="#ff7224" strokeWidth="4.5" strokeLinecap="round" />
-              <path d="M18,40 L18,22 M18,28 C12,24 9,17 11,10 M18,23 C25,19 28,12 25,6" fill="none" stroke="#ffd25e" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
-
-            {/* Nautical Brass Screws */}
-            <div className="absolute top-2.5 left-2.5 w-3 h-3 rounded-full bg-[#e3ab4b] border border-[#3b1d06] shadow-sm flex items-center justify-center text-[7px] text-[#4d2808]">✕</div>
-            <div className="absolute top-2.5 right-2.5 w-3 h-3 rounded-full bg-[#e3ab4b] border border-[#3b1d06] shadow-sm flex items-center justify-center text-[7px] text-[#4d2808]">✕</div>
-            <div className="absolute bottom-2.5 left-2.5 w-3 h-3 rounded-full bg-[#e3ab4b] border border-[#3b1d06] shadow-sm flex items-center justify-center text-[7px] text-[#4d2808]">✕</div>
-            <div className="absolute bottom-2.5 right-2.5 w-3 h-3 rounded-full bg-[#e3ab4b] border border-[#3b1d06] shadow-sm flex items-center justify-center text-[7px] text-[#4d2808]">✕</div>
-
-            {/* Top Row: Carved Wooden Tabs + Random Fish + Carved Coin Bank */}
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setTab("skin")}
-                  className="ui-btn px-4 py-1.5 text-[15px] text-white whitespace-nowrap shrink-0"
-                  style={{ background: tab === "skin" ? "linear-gradient(180deg, #ff9938, #d95b12)" : "#4d2c14" }}
-                >
-                  🐠 IKAN FRENZY ({SKINS.length})
-                </button>
-                <button
-                  onClick={() => setTab("shop")}
-                  className="ui-btn px-4 py-1.5 text-[15px] text-white whitespace-nowrap shrink-0"
-                  style={{ background: tab === "shop" ? "linear-gradient(180deg, #ff9938, #d95b12)" : "#4d2c14" }}
-                >
-                  ⚡ UPGRADE
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                {tab === "skin" && (
-                  <button
-                    onClick={pickRandomSkin}
-                    className="ui-btn px-3.5 py-1.5 text-[13.5px] text-amber-100 whitespace-nowrap shrink-0"
-                    style={{ background: "linear-gradient(180deg, #2b7a9e, #184e6b)" }}
-                    title="Pilih ikan secara acak"
-                  >
-                    🎲 Acak Ikan
-                  </button>
-                )}
-                <div className="ff-carved-slot px-3 py-1 flex items-center gap-1.5 text-[18px] font-extrabold text-yellow-200 tabular-nums">
-                  <img src={coin} className="w-6 h-6" alt="Koin" />
-                  <span>{save.coins.toLocaleString("en-US")}</span>
-                </div>
-              </div>
-            </div>
-
-            {tab === "skin" ? (
-              <div className="wood-scroll flex-1 min-h-[360px] max-h-[420px] overflow-y-auto pr-1.5 py-0.5">
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 items-start">
-                  {SKINS.map((s) => {
-                    const sel = save.skin === s.id;
-
-                    return (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => pickSkin(s.id)}
-                        className={`relative p-2 flex flex-col items-stretch text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-200 ${
-                          sel
-                            ? "wood-fish-tile-active"
-                            : s.rare
-                              ? "wood-fish-tile wood-fish-tile-rare"
-                              : "wood-fish-tile"
-                        }`}
-                      >
-                        {sel && (
-                          <span
-                            className="pointer-events-none absolute inset-0 rounded-[11px] overflow-hidden ui-sheen"
-                            aria-hidden="true"
-                          />
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      ref={(el) => {
+                        tileRefs.current[idx] = el;
+                      }}
+                      onClick={() => selectSkin(s.id)}
+                      className={`${tileClass} p-2 flex flex-col justify-between gap-1.5 text-center`}
+                    >
+                      <div className={`${windowClass} relative w-full h-[78px] overflow-hidden flex items-center justify-center`}>
+                        {s.rare && (
+                          <span className="badge-langka absolute top-1 left-1 z-10 px-1.5 py-0.5 rounded text-[8.5px] font-extrabold uppercase tracking-wider text-white">
+                            ★ LANGKA
+                          </span>
                         )}
-                        {/* Recessed Deep-Lagoon Viewport with Animated Fish */}
+                        {s.supports3D && (
+                          <span
+                            className={`absolute top-1 right-1 z-10 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase ${
+                              save.mode3D
+                                ? "bg-cyan-400 text-[#052038]"
+                                : "bg-slate-950/65 text-cyan-200 border border-cyan-300/35"
+                            }`}
+                          >
+                            3D
+                          </span>
+                        )}
+                        <canvas
+                          ref={(el) => {
+                            tileCanvasRefs.current[idx] = el;
+                          }}
+                          aria-label={s.name}
+                          className="w-[132px] h-[74px] object-contain block pointer-events-none"
+                        />
+                      </div>
+
+                      <div className="px-0.5">
                         <div
-                          className={`relative w-full h-[64px] shrink-0 overflow-hidden flex items-center justify-center ${
-                            sel
-                              ? "etalase-lagoon-window ring-1 ring-amber-200/75"
-                              : s.rare
-                                ? "etalase-lagoon-window etalase-lagoon-window-rare"
-                                : "etalase-lagoon-window"
+                          className={`text-[13.5px] font-extrabold leading-tight truncate ${
+                            isActive ? "text-[#2b1405]" : "text-amber-50"
                           }`}
                         >
-                          {s.rare && (
-                            <span className="absolute top-1 right-1 px-1.5 py-[2px] rounded bg-gradient-to-r from-amber-300 via-yellow-200 to-fuchsia-300 text-[#2a0e3d] font-black text-[9.5px] leading-none tracking-wide shadow-sm z-10">
-                              ★ LANGKA
-                            </span>
-                          )}
-                          {s.supports3D && (
-                            <span
-                              className={`absolute top-1 ${s.rare ? "left-1" : "right-1"} px-1.5 py-[2px] rounded font-black text-[9.5px] leading-none tracking-wide shadow-sm z-10 ${
-                                save.mode3D
-                                  ? "bg-gradient-to-r from-cyan-300 to-sky-400 text-[#072138]"
-                                  : "bg-slate-900/75 text-cyan-200 border border-cyan-300/45"
-                              }`}
-                            >
-                              3D
-                            </span>
-                          )}
-
-                          <div className="relative z-10 w-[114px] h-[56px] flex items-center justify-center">
-                            <canvas
-                              ref={(el) => {
-                                etalaseCanvasRefs.current[s.id] = el;
-                              }}
-                              aria-label={s.name}
-                              className="w-[114px] h-[56px] block drop-shadow-[0_4px_8px_rgba(0,0,0,0.62)]"
-                            />
-                          </div>
+                          {s.name}
                         </div>
-
-                        {/* Uncropped Readable Name, Subtitle & Status */}
-                        <div className="pt-1.5 flex flex-col items-center gap-0.5 shrink-0 min-w-0">
-                          <div
-                            className={`text-[14px] font-extrabold leading-snug truncate w-full shrink-0 ${
-                              sel ? "text-[#2b1504]" : "text-white"
-                            }`}
-                          >
-                            {s.name}
-                          </div>
-                          <div
-                            className={`text-[11.5px] leading-snug truncate w-full shrink-0 ${
-                              sel ? "text-[#4d2808] font-semibold" : "text-cyan-200/90 font-medium"
-                            }`}
-                          >
-                            {s.subtitle}
-                          </div>
-                          <div
-                            className={`mt-1 w-full py-1 rounded-lg text-[12px] font-extrabold tracking-wide leading-none whitespace-nowrap shrink-0 ${
-                              sel
-                                ? "bg-[#361b08] text-amber-200 shadow-inner"
-                                : s.rare
-                                  ? "bg-[#0c203e] text-cyan-200 border border-cyan-400/30"
-                                  : "bg-[#1a0d05] text-yellow-300 border border-amber-500/20"
-                            }`}
-                          >
-                            {sel ? "✓ DIPAKAI" : "PAKAI"}
-                          </div>
+                        <div
+                          className={`text-[10.5px] font-bold truncate mt-0.5 ${
+                            isActive ? "text-[#5c2c0a]" : "text-cyan-200/90"
+                          }`}
+                        >
+                          {s.subtitle}
                         </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                      </div>
+
+                      <div
+                        className={`h-[24px] rounded-lg flex items-center justify-center text-[10.5px] font-extrabold tracking-wide ${
+                          isActive
+                            ? "bg-[#241105] text-yellow-300 border border-[#613412]"
+                            : "bg-black/40 text-amber-300 border border-amber-200/15"
+                        }`}
+                      >
+                        {isActive ? "✓ DIPAKAI" : "PAKAI"}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
-            ) : (
-              <div className="flex flex-col gap-3">
+            </div>
+          ) : (
+            /* TAB 2: CARVED WOODEN UPGRADE WORKSHOP */
+            <div className="relative z-10 flex-1 min-h-0 flex flex-col gap-2.5 overflow-y-auto wood-scroll pr-1">
+              <div className="artistic-inset px-3.5 py-2 flex items-center justify-between gap-2 shrink-0">
+                <div>
+                  <div className="text-[14px] font-extrabold text-amber-100">Bengkel Kemampuan Ikan</div>
+                  <div className="text-[11px] font-medium text-amber-200/75">
+                    Tingkatkan kekuatan sedotan, kecepatan sirip & ukuran awal permanen!
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowUpgrade(false)}
+                  className="ui-btn px-3 py-1 text-[11.5px] text-amber-100 shrink-0"
+                  style={{ background: "linear-gradient(180deg, #8c5b2f 0%, #5c3614 100%)" }}
+                >
+                  ← Ke Etalase
+                </button>
+              </div>
+
+              <div className="flex flex-col gap-2.5">
                 {UPGRADES.map((u) => {
                   const lv = save.upgrades[u.id];
                   const max = lv >= MAX_UPGRADE;
                   const cost = max ? 0 : UPGRADE_COSTS[lv];
                   const canBuy = !max && save.coins >= cost;
+                  const pct = Math.round((lv / MAX_UPGRADE) * 100);
                   return (
-                    <div key={u.id} className="flex items-center gap-3.5 artistic-inset p-4">
-                      <div className="text-[30px] shrink-0">{u.icon}</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline justify-between gap-2">
-                          <span className="text-[16px] font-extrabold text-amber-50">{u.name}</span>
-                          <span className="text-[13px] font-bold text-yellow-300 tabular-nums shrink-0">
-                            Lv {lv}/{MAX_UPGRADE}
-                          </span>
+                    <div
+                      key={u.id}
+                      className="artistic-inset p-3 sm:p-3.5 flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="ff-carved-slot w-12 h-12 flex items-center justify-center text-2xl shrink-0">
+                          {u.icon}
                         </div>
-                        <div className="text-[13px] text-amber-200/90 mt-0.5">{u.desc}</div>
-                        <div className="flex gap-1.5 mt-2">
-                          {Array.from({ length: MAX_UPGRADE }).map((_, i) => (
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[15px] font-extrabold text-white">{u.name}</span>
+                            <span className="px-2 py-0.5 rounded-md bg-cyan-950/90 border border-cyan-400/40 text-[11px] font-extrabold text-cyan-200 tabular-nums">
+                              Lv {lv}/{MAX_UPGRADE}
+                            </span>
+                          </div>
+                          <p className="text-[11.5px] text-amber-100/80 mt-0.5">{u.desc}</p>
+                          <div className="ff-bar-slot h-3 mt-2 overflow-hidden relative">
                             <div
-                              key={i}
-                              className={`h-3 flex-1 rounded-sm border border-[#1a0d04] ${i < lv ? "ff-yellow-fill" : "bg-[#422712]"}`}
+                              className="ff-yellow-fill h-full transition-all duration-200"
+                              style={{ width: `${pct}%` }}
                             />
-                          ))}
+                          </div>
                         </div>
                       </div>
+
                       <button
+                        type="button"
                         onClick={() => buyUp(u.id)}
                         disabled={!canBuy}
-                        className="ui-btn px-4 py-2 text-[14.5px] text-white disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap shrink-0 tabular-nums"
-                        style={{ background: max ? "#5c534a" : "linear-gradient(180deg, #ff9938, #d95b12)" }}
+                        className="ui-btn px-3.5 py-2 min-w-[104px] text-[12.5px] text-white shrink-0 flex items-center justify-center gap-1.5 disabled:opacity-45 disabled:cursor-not-allowed tabular-nums"
+                        style={{
+                          background: max
+                            ? "linear-gradient(180deg, #10b981 0%, #047857 100%)"
+                            : canBuy
+                              ? "linear-gradient(180deg, #ffb422 0%, #d97706 100%)"
+                              : "#3f240f",
+                        }}
                       >
-                        {max ? "MAKSIMAL" : `🪙 ${cost}`}
+                        {max ? (
+                          <span>✓ MAKSIMAL</span>
+                        ) : (
+                          <>
+                            <img src={coin} className="w-4 h-4 shrink-0" alt="" />
+                            <span className="text-[#231004] font-black">{cost}</span>
+                          </>
+                        )}
                       </button>
                     </div>
                   );
                 })}
               </div>
-            )}
-          </section>
-        </div>
+            </div>
+          )}
+        </section>
       </div>
+
+      {/* TOAST NOTIFICATION */}
+      {toast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
+          <div className="artistic-wood-board px-4 py-2 flex items-center gap-2 text-xs sm:text-sm font-extrabold text-amber-50 shadow-2xl">
+            <span aria-hidden="true">{toast.icon}</span>
+            <span>{toast.msg}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

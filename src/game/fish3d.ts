@@ -492,7 +492,7 @@ function createAndy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   });
 
   const pecMat = makeFishMat(pecTex, { emissiveIntensity: 0.3, transparent: true, opacity: 0.84 });
-  const pecZ = evalHalfZ(0.094) * 0.82;
+  const pecZ = surfaceZAt(evalTop, evalBot, evalHalfZ, 0.094, -0.074, 0.22, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
   pecLeft.position.set(0.094, -0.074, pecZ);
   pecLeft.add(new THREE.Mesh(pecGeo, pecMat));
@@ -559,24 +559,24 @@ function createClown3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const to3D = (x2: number, y2: number): Pt => [x2, -y2];
   const HX = 0.325;
   const HY = -0.058;
-  const UX = 0.429;
-  const UY = -0.045;
-  const LX = 0.402;
-  const LY = -0.086;
+  const UX = 0.434;
+  const UY = -0.028;
+  const LX = 0.412;
+  const LY = -0.088;
 
   const topSegs: [Pt, Pt, Pt, Pt][] = [
     [to3D(-0.215, -0.05), to3D(-0.125, -0.12), to3D(0.0, -0.215), to3D(0.125, -0.225)],
-    [to3D(0.125, -0.225), to3D(0.265, -0.235), to3D(0.395, -0.16), to3D(0.432, -0.035)],
+    [to3D(0.125, -0.225), to3D(0.265, -0.232), to3D(0.388, -0.152), [0.422, 0.024]],
+    [[0.422, 0.024], [0.429, 0.006], [0.433, -0.010], [UX, UY]],
   ];
   const botSegs: [Pt, Pt, Pt, Pt][] = [
-    [[LX, LY], to3D(0.384, 0.124), to3D(0.315, 0.165), to3D(0.215, 0.188)],
+    [[LX, LY], to3D(0.388, 0.128), to3D(0.315, 0.165), to3D(0.215, 0.188)],
     [to3D(0.215, 0.188), to3D(0.1, 0.212), to3D(-0.025, 0.192), to3D(-0.125, 0.125)],
   ];
   const topPts: Pt[] = [];
   topSegs.forEach((s, idx) => {
     for (let i = idx === 0 ? 0 : 1; i <= 32; i++) topPts.push(cubicPt(s[0], s[1], s[2], s[3], i / 32));
   });
-  topPts.push([UX, UY]);
 
   const botPts: Pt[] = [to3D(-0.215, 0.068), to3D(-0.125, 0.125)];
   for (let s = botSegs.length - 1; s >= 0; s--) {
@@ -588,7 +588,7 @@ function createClown3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const evalBot = (x: number) => interpCurveY(botPts, x);
   const evalHalfZ = (x: number) => {
     const u = clamp((x - -0.215) / (UX - -0.215), 0, 1);
-    const arch = Math.sin(clamp(u, 0.02, 0.985) * Math.PI);
+    const arch = Math.sin(clamp(u, 0.03, 0.96) * Math.PI);
     return 0.018 + 0.098 * Math.pow(arch, 0.56) * (1 - 0.15 * u);
   };
   const mapWorldUV = (x: number, y: number): Pt => [clamp((x - -0.26) / 0.75, 0, 1), clamp((y - -0.25) / 0.52, 0, 1)];
@@ -872,7 +872,7 @@ function createClown3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   scaleGroup.position.set(0.0084, -0.0168, 0);
   bodyGroup.add(scaleGroup);
 
-  const evalUpperPalate = (x: number) => HY - 0.005 + clamp((x - HX) / (UX - HX), 0, 1) * 0.015;
+  const evalUpperPalate = (x: number) => HY - 0.004 + clamp((x - HX) / (UX - HX), 0, 1) * 0.014;
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, HX, 0.032, 0.014);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
 
@@ -937,7 +937,7 @@ function createClown3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       xEnd: LX,
       uSteps: 18,
       vSteps: 22,
-      evalTopY: (x) => HY - 0.006 - clamp((x - HX) / (LX - HX), 0, 1) * 0.018,
+      evalTopY: (x) => HY - 0.002 - clamp((x - HX) / (LX - HX), 0, 1) * 0.010,
       evalBotY: evalBot,
       evalHalfZ,
       mapUV: mapWorldUV,
@@ -980,7 +980,7 @@ function createClown3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   });
 
   const pecMat = makeFishMat(pecTex, { emissiveIntensity: 0.28 });
-  const pecZ = evalHalfZ(0.068) * 0.86;
+  const pecZ = surfaceZAt(evalTop, evalBot, evalHalfZ, 0.068, -0.058, 0.22, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
   pecLeft.position.set(0.068, -0.058, pecZ);
   pecLeft.add(new THREE.Mesh(pecGeo, pecMat));
@@ -1053,7 +1053,7 @@ function createLayla3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   for (let i = 1; i <= 32; i++) topPts.push(cubicPt(t2[0], t2[1], t2[2], t2[3], i / 32));
 
   const botPts: Pt[] = [];
-  const b1: [Pt, Pt, Pt, Pt] = [[LX, LY - 0.008], [X(0.88), Y3(0.62)], [X(0.5), Y3(0.98)], [X(0.02), Y3(0.94)]];
+  const b1: [Pt, Pt, Pt, Pt] = [[LX, LY - 0.027], [X(0.88), Y3(0.62)], [X(0.5), Y3(0.98)], [X(0.02), Y3(0.94)]];
   const b2: [Pt, Pt, Pt, Pt] = [[X(0.02), Y3(0.94)], [X(-0.44), Y3(0.94)], [X(-0.72), Y3(0.48)], [X(-0.96), Y3(0.14)]];
   for (let i = 0; i <= 32; i++) botPts.push(cubicPt(b2[3], b2[2], b2[1], b2[0], i / 32));
   for (let i = 1; i <= 32; i++) botPts.push(cubicPt(b1[3], b1[2], b1[1], b1[0], i / 32));
@@ -1376,7 +1376,7 @@ function createLayla3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   });
 
   const pecMat = makeFishMat(pecTex, { emissiveIntensity: 0.28, transparent: true, opacity: 0.85 });
-  const pecZ = evalHalfZ(X(0.24)) * 0.82;
+  const pecZ = surfaceZAt(evalTop, evalBot, evalHalfZ, X(0.24), Y3(0.34), 0.22, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
   pecLeft.position.set(X(0.24), Y3(0.34), pecZ);
   pecLeft.add(new THREE.Mesh(pecGeo, pecMat));
@@ -1479,7 +1479,7 @@ function createEddy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   // Cranium + back + peduncle curves (peduncle -0.278 up to crown 0.08,+0.156 down to snout tip 0.338,-0.008)
   const topSeg1: [Pt, Pt, Pt, Pt] = [[-0.278, -0.012], [-0.2, 0.095], [-0.065, 0.158], [0.08, 0.156]];
-  const topSeg2: [Pt, Pt, Pt, Pt] = [[0.08, 0.156], [0.182, 0.154], [0.258, 0.092], [0.338, -0.008]];
+  const topSeg2: [Pt, Pt, Pt, Pt] = [[0.08, 0.156], [0.182, 0.154], [0.258, 0.098], [0.338, 0.008]];
   const topPts: Pt[] = [];
   for (let i = 0; i <= 30; i++) topPts.push(cubicPt(topSeg1[0], topSeg1[1], topSeg1[2], topSeg1[3], i / 30));
   for (let i = 1; i <= 30; i++) topPts.push(cubicPt(topSeg2[0], topSeg2[1], topSeg2[2], topSeg2[3], i / 30));
@@ -1489,10 +1489,10 @@ function createEddy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const tBotSeg: [Pt, Pt, Pt, Pt] = [[-0.278, -0.048], [-0.045, -0.082], [0.012, -0.295], [0.125, -0.306]];
   for (let i = 0; i <= 34; i++) torsoBotPts.push(cubicPt(tBotSeg[0], tBotSeg[1], tBotSeg[2], tBotSeg[3], i / 34));
 
-  // Mouth seam inside cranium (0.118,-0.146 up to snout tip 0.338,-0.008)
+  // Mouth seam inside cranium (0.118,-0.146 up to snout tip 0.338,-0.010)
   const mouthSeam = (x: number): number => {
     const u = clamp((x - HX) / (0.338 - HX), 0, 1);
-    return HY + (-0.008 - HY) * Math.pow(u, 0.92);
+    return HY + (-0.010 - HY) * Math.pow(u, 0.92);
   };
 
   // Closed lower jaw scoop chin (0.115 .. 0.356): top = slanted lip rim, bot = deep bulbous scoop chin!
@@ -1625,11 +1625,12 @@ function createEddy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   // Curved Bright White Tusks (~24% wider & crisp white with subtle outline!)
   const ivoryMat = track(
     new THREE.MeshPhysicalMaterial({
-      color: "#ffffff",
+      color: "#fffcf2",
       emissive: "#f4f9ff",
-      emissiveIntensity: 0.42,
-      roughness: 0.14,
-      clearcoat: 0.85,
+      emissiveIntensity: 0.16,
+      roughness: 0.45,
+      clearcoat: 0.08,
+      envMapIntensity: 0.08,
     })
   );
   const tuskOlMat = track(new THREE.MeshBasicMaterial({ color: OL, side: THREE.BackSide }));
@@ -1794,7 +1795,7 @@ function createEddy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     })
   );
   const pecMat = makeFishMat(pecTex, { emissiveIntensity: 0.28 });
-  const pecZ = evalHalfZ(0.032) * 0.85;
+  const pecZ = surfaceZAt(evalTop, evalBot, evalHalfZ, 0.032, 0.022, 0.22, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
   pecLeft.position.set(0.032, 0.022, pecZ);
   pecLeft.add(new THREE.Mesh(pecGeo, pecMat));
@@ -1945,10 +1946,12 @@ function createEddy3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
       // Extra lively 4-peak gill fin fanning
       const ff = p.wag2 * (p.sucking ? 1.55 : 1.1);
-      pecLeft.rotation.z = -0.12 + Math.sin(ff) * 0.34;
-      pecLeft.rotation.y = -0.22 + Math.cos(ff) * 0.2;
-      pecRight.rotation.z = -0.12 - Math.sin(ff + 0.6) * 0.34;
-      pecRight.rotation.y = 0.22 - Math.cos(ff + 0.6) * 0.2;
+      pecLeft.rotation.x = 0.28 + Math.cos(ff) * 0.12;
+      pecLeft.rotation.y = 0.16;
+      pecLeft.rotation.z = -0.14 + Math.sin(ff) * 0.28;
+      pecRight.rotation.x = -0.28 - Math.cos(ff + 0.6) * 0.12;
+      pecRight.rotation.y = -0.16;
+      pecRight.rotation.z = -0.14 - Math.sin(ff + 0.6) * 0.28;
     },
     dispose: () => {
       for (const d of ctx.disposables) d.dispose();
@@ -1974,19 +1977,19 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const HX = 0.276;
   const HY = -0.068; // -(0.048 + 0.02)
   const UX = 0.436;
-  const UY = -0.064;
+  const UY = -0.052;
   const LX = 0.428;
-  const LY = -0.072;
+  const LY = -0.086;
 
   const topSegs: [Pt, Pt, Pt, Pt][] = [
     [to3D(-0.36, 0.018), to3D(-0.275, -0.018), to3D(-0.19, -0.072), to3D(-0.035, -0.098)],
     [to3D(-0.035, -0.098), to3D(0.115, -0.108), to3D(0.255, -0.095), to3D(0.355, -0.042)],
-    [to3D(0.355, -0.042), to3D(0.395, -0.022), to3D(0.426, 0.016), [UX, UY]],
+    [to3D(0.355, -0.042), to3D(0.398, -0.016), to3D(0.428, 0.014), [UX, UY]],
   ];
   const botSegs: [Pt, Pt, Pt, Pt][] = [
     [to3D(-0.36, 0.042), to3D(-0.275, 0.062), to3D(-0.195, 0.075), to3D(0.085, 0.108)],
     [to3D(0.085, 0.108), to3D(0.215, 0.102), to3D(0.335, 0.104), to3D(0.39, 0.086)],
-    [to3D(0.39, 0.086), to3D(0.415, 0.076), to3D(0.43, 0.062), [LX, LY]],
+    [to3D(0.39, 0.086), to3D(0.415, 0.078), to3D(0.426, 0.070), [LX, LY]],
   ];
   const topPts: Pt[] = [];
   topSegs.forEach((s, i) => {
@@ -2116,7 +2119,7 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       xEnd: LX,
       uSteps: 18,
       vSteps: 22,
-      evalTopY: () => HY - 0.003,
+      evalTopY: () => HY - 0.002,
       evalBotY: evalBot,
       evalHalfZ,
       mapUV: mapWorldUV,
@@ -2188,9 +2191,10 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     new THREE.MeshPhysicalMaterial({
       color: "#151a24",
       emissive: BLK_HI,
-      emissiveIntensity: 0.2,
-      roughness: 0.3,
-      clearcoat: 0.55,
+      emissiveIntensity: 0.12,
+      roughness: 0.78,
+      clearcoat: 0.05,
+      envMapIntensity: 0.08,
     })
   );
   injectSpineShader(blackFinMat, uniforms);
@@ -2216,9 +2220,10 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     new THREE.MeshPhysicalMaterial({
       color: "#161d28",
       emissive: BLK_HI,
-      emissiveIntensity: 0.22,
-      roughness: 0.3,
-      clearcoat: 0.55,
+      emissiveIntensity: 0.12,
+      roughness: 0.78,
+      clearcoat: 0.05,
+      envMapIntensity: 0.08,
     })
   );
   const tailPivot = new THREE.Group();
@@ -2236,15 +2241,15 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const { geo: flipGeo } = createExtrudedFin(flipShape, 0.006, 0.0015, 14);
   track(flipGeo);
 
-  const pecZ = evalHalfZ(0.185) * 0.85;
+  const pecZ = surfaceZAt(evalTop, evalBot, evalHalfZ, 0.185, -0.092, 0.22, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
   pecLeft.position.set(0.185, -0.092, pecZ);
-  pecLeft.rotation.set(0.35, -0.25, 0.65);
+  pecLeft.rotation.set(-0.22, 0.34, 0.55);
   pecLeft.add(new THREE.Mesh(flipGeo, flukeMat));
 
   const pecRight = new THREE.Group();
   pecRight.position.set(0.185, -0.092, -pecZ);
-  pecRight.rotation.set(-0.35, 0.25, 0.65);
+  pecRight.rotation.set(0.22, -0.34, 0.55);
   pecRight.add(new THREE.Mesh(flipGeo, flukeMat));
   bodyGroup.add(pecLeft, pecRight);
 
@@ -2299,8 +2304,10 @@ function createOrca3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       // Vertical whale fluke pump!
       tailPivot.rotation.y = 0;
       tailPivot.rotation.z = Math.sin(p.tailPh) * (0.28 + p.swimSpeed * 0.18);
-      pecLeft.rotation.z = 0.65 + Math.sin(p.wag2) * 0.12;
-      pecRight.rotation.z = 0.65 + Math.sin(p.wag2 + 0.4) * 0.12;
+      pecLeft.rotation.y = 0.34 + Math.sin(p.wag2) * 0.12;
+      pecLeft.rotation.z = 0.55 + Math.sin(p.wag2) * 0.1;
+      pecRight.rotation.y = -0.34 - Math.sin(p.wag2 + 0.4) * 0.12;
+      pecRight.rotation.z = 0.55 + Math.sin(p.wag2 + 0.4) * 0.1;
     },
     dispose: () => {
       for (const d of ctx.disposables) d.dispose();
@@ -2604,16 +2611,18 @@ function createSnapturtle3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     [0.23, 0.068],
     [0.275, 0.064],
     [0.325, 0.056],
-    [0.368, 0.045],
-    [0.392, 0.022],
-    [0.396, -0.002],
-    [0.39, -0.032],
-    [0.382, -0.036],
+    [0.368, 0.044],
+    [0.386, 0.024],
+    [0.394, 0.006],
+    [0.396, -0.008],
   ];
   const skullSeamY = (x: number): number => {
-    if (x > 0.365) return -0.036 + ((0.396 - x) / 0.031) * 0.026; // sharp hooked upper beak tip!
-    const u = clamp((x - HX) / (0.365 - HX), 0, 1);
-    return HY + (-0.01 - HY) * Math.pow(u, 0.8);
+    if (x > 0.355) {
+      const k = clamp((x - 0.355) / (UX - 0.355), 0, 1);
+      return -0.014 - Math.sin(k * Math.PI * 0.7) * 0.010 - k * 0.010;
+    }
+    const u = clamp((x - HX) / (0.355 - HX), 0, 1);
+    return HY + (-0.014 - HY) * Math.pow(u, 0.8);
   };
   const headHalfZ = (x: number) => {
     const u = clamp((x - 0.16) / (UX - 0.16), 0, 1);
@@ -2632,7 +2641,7 @@ function createSnapturtle3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       mapUV: (x, y) => [clamp((x - 0.16) / 0.24, 0, 1), clamp((y + 0.07) / 0.145, 0, 1)],
       localOffsetX: 0.168,
       localOffsetY: -0.01,
-      roundFront: false,
+      roundFront: true,
     })
   );
   headGroup.add(new THREE.Mesh(skullGeo, makeFishMat(headTex, { emissiveIntensity: isAlbino ? 0.28 : 0.2 })));
@@ -2646,8 +2655,8 @@ function createSnapturtle3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const lBotPts: Pt[] = [
     [HX - 0.02, -0.064],
     [0.325, -0.056],
-    [0.362, -0.046],
-    [0.376, -0.021],
+    [0.362, -0.048],
+    [0.376, -0.038],
   ];
   const lowerGeo = track(
     buildLoftedSurface({
@@ -2980,9 +2989,9 @@ export function applyFish3DPose(rig: Fish3DRig, p: Fish3DPose) {
   // 4. Pectoral & Pelvic Flutter (for standard fin rigs)
   if (!rig.skipDefaultFins && !rig.isFluke) {
     const finFlutter = p.wag2 * (p.sucking ? 1.55 : 1.0);
-    rig.pecLeft.rotation.y = -0.28 + Math.sin(finFlutter) * 0.24;
+    rig.pecLeft.rotation.y = 0.32 + Math.sin(finFlutter) * 0.16;
     rig.pecLeft.rotation.z = Math.cos(finFlutter) * 0.14;
-    rig.pecRight.rotation.y = 0.28 - Math.sin(finFlutter + 0.7) * 0.24;
+    rig.pecRight.rotation.y = -0.32 - Math.sin(finFlutter + 0.7) * 0.16;
     rig.pecRight.rotation.z = Math.cos(finFlutter + 0.7) * 0.14;
     rig.pelvicFin.rotation.z = -Math.sin(finFlutter) * 0.1;
   }
@@ -3061,12 +3070,13 @@ class Fish3DService {
       const pmrem = new THREE.PMREMGenerator(renderer);
       const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
       scene.environment = envRT.texture;
+      scene.environmentIntensity = 0.24;
       pmrem.dispose();
 
-      const hemi = new THREE.HemisphereLight(0xebfbff, 0x3b82d6, 1.45);
-      const key = new THREE.DirectionalLight(0xffffff, 1.45);
+      const hemi = new THREE.HemisphereLight(0xebfbff, 0x3b82d6, 1.08);
+      const key = new THREE.DirectionalLight(0xffffff, 1.02);
       key.position.set(1.2, 2.2, 3.8);
-      const rim = new THREE.DirectionalLight(0x67e8f9, 0.9);
+      const rim = new THREE.DirectionalLight(0x67e8f9, 0.55);
       rim.position.set(-2.0, 0.9, -2.2);
       scene.add(hemi, key, rim);
 
@@ -3129,9 +3139,9 @@ class Fish3DService {
 
     const d = clamp(pose.depthFactor ?? 0, 0, 1);
     if (this.keyLight && this.hemiLight && this.rimLight) {
-      this.keyLight.intensity = 1.55 - d * 0.45;
-      this.hemiLight.intensity = 1.35 - d * 0.28;
-      this.rimLight.intensity = 0.95 + d * 0.75;
+      this.keyLight.intensity = 1.02 - d * 0.32;
+      this.hemiLight.intensity = 1.08 - d * 0.24;
+      this.rimLight.intensity = 0.55 + d * 0.45;
     }
 
     applyFish3DPose(rig, pose);
@@ -3261,40 +3271,52 @@ class Fish3DService {
     return true;
   }
 
-  renderSnapshot(sp: Species, pose: Fish3DPose, pxSize = 156): HTMLCanvasElement {
+  private snapshotCamZ(sp: Species): number {
+    if (sp.style === "orca" || sp.style === "whaleshark" || sp.style === "narwhal") return 1.56;
+    if (sp.style === "eddy" || sp.style === "layla" || sp.style === "snapturtle" || sp.style === "seadragon") return 1.44;
+    if (sp.style === "andy" || sp.style === "boris" || sp.style === "butterfly" || sp.style === "leon") return 1.38;
+    return 1.32;
+  }
+
+  renderSnapshot(sp: Species, pose: Fish3DPose, outW = 160, outH = 96): HTMLCanvasElement {
     const out = document.createElement("canvas");
-    out.width = pxSize;
-    out.height = pxSize;
-    const c = out.getContext("2d")!;
-    if (!this.renderToCanvas(sp, c, 0, 0, pxSize, pxSize, pose, pxSize)) return out;
+    out.width = outW;
+    out.height = outH;
+    const c = out.getContext("2d");
+    if (!c) return out;
 
-    const img = c.getImageData(0, 0, pxSize, pxSize).data;
-    let minX = pxSize;
-    let minY = pxSize;
-    let maxX = -1;
-    let maxY = -1;
-    for (let y = 0; y < pxSize; y++) {
-      for (let x = 0; x < pxSize; x++) {
-        if (img[(y * pxSize + x) * 4 + 3] > 8) {
-          if (x < minX) minX = x;
-          if (x > maxX) maxX = x;
-          if (y < minY) minY = y;
-          if (y > maxY) maxY = y;
-        }
-      }
+    this.ensureInit();
+    if (this.failed || !this.renderer || !this.scene || !this.camera) return out;
+    const rig = this.getOrCreateRig(sp);
+    if (!rig) return out;
+
+    const prevAspect = this.camera.aspect;
+    const prevZ = this.camera.position.z;
+    this.camera.aspect = outW / outH;
+    this.camera.position.z = this.snapshotCamZ(sp);
+    this.camera.updateProjectionMatrix();
+
+    if (this.curW !== outW || this.curH !== outH) {
+      this.curW = outW;
+      this.curH = outH;
+      this.renderer.setSize(outW, outH, false);
     }
-    if (maxX < minX || maxY < minY) return out;
 
-    const pad = 2;
-    const sx = Math.max(0, minX - pad);
-    const sy = Math.max(0, minY - pad);
-    const sw = Math.min(pxSize - sx, maxX - minX + 1 + pad * 2);
-    const sh = Math.min(pxSize - sy, maxY - minY + 1 + pad * 2);
-    const trimmed = document.createElement("canvas");
-    trimmed.width = sw;
-    trimmed.height = sh;
-    trimmed.getContext("2d")!.drawImage(out, sx, sy, sw, sh, 0, 0, sw, sh);
-    return trimmed;
+    const d = clamp(pose.depthFactor ?? 0, 0, 1);
+    if (this.keyLight && this.hemiLight && this.rimLight) {
+      this.keyLight.intensity = 1.02 - d * 0.32;
+      this.hemiLight.intensity = 1.08 - d * 0.24;
+      this.rimLight.intensity = 0.55 + d * 0.45;
+    }
+
+    applyFish3DPose(rig, pose);
+    this.renderer.render(this.scene, this.camera);
+    c.drawImage(this.renderer.domElement, 0, 0, outW, outH);
+
+    this.camera.aspect = prevAspect;
+    this.camera.position.z = prevZ;
+    this.camera.updateProjectionMatrix();
+    return out;
   }
 
   dispose() {

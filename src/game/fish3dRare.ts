@@ -96,7 +96,7 @@ function createMandarin3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const botProf = sampleBezierChain(
     [
       [[-0.172, -0.035], [-0.082, -0.082], [0.055, -0.112], [0.182, -0.09]],
-      [[0.182, -0.09], [0.288, -0.076], [0.32, -0.042], [0.336, -0.032]],
+      [[0.182, -0.09], [0.288, -0.076], [0.32, -0.052], [0.338, -0.044]],
     ],
     22
   );
@@ -181,7 +181,7 @@ function createMandarin3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const evalTop = (x: number) => interpCurveY(topProf, x);
   const evalBot = (x: number) => interpCurveY(botProf, x);
-  const evalUpperPalate = (x: number) => (x > 0.31 ? -0.024 : -0.03);
+  const evalUpperPalate = () => -0.031;
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, xHead);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
   const mandarinMask = bodySpineOutlineMask(
@@ -228,7 +228,7 @@ function createMandarin3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       xEnd: xSnout - 0.01,
       uSteps: 16,
       vSteps: 18,
-      evalTopY: () => -0.024,
+      evalTopY: () => -0.028,
       evalBotY: evalBot,
       evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)) * 0.9,
       mapUV,
@@ -427,11 +427,20 @@ function createMandarin3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     fc.fillRect(-0.12, -0.09, 0.14, 0.14);
     drawFinRays(fc, [-0.006, -0.004], [[-0.076, -0.018], [-0.076, 0], [-0.076, 0.018], [-0.076, -0.036]], "rgba(255,255,255,0.52)", 0.0026);
   }, maxAnisotropy, false, 0.0009, { transparent: true, opacity: 0.94 });
+  const pecZ = surfaceZAt(
+    evalTop,
+    evalUnifiedBot,
+    (x) => evalZ(x, (x - xTail) / (xSnout - xTail)),
+    0.105,
+    -0.032,
+    0.22,
+    1.0
+  ) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.105, -0.032, 0.074);
+  pecLeft.position.set(0.105, -0.032, pecZ);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.105, -0.032, -0.074);
+  pecRight.position.set(0.105, -0.032, -pecZ);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -517,14 +526,14 @@ function createAurora3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const topProf = sampleBezierChain(
     [
       [[-0.085, 0.044], [0.01, 0.098], [0.155, 0.105], [0.255, 0.068]],
-      [[0.255, 0.068], [0.305, 0.048], [0.338, 0.018], [xSnout, -0.008]],
+      [[0.255, 0.068], [0.305, 0.048], [0.338, 0.02], [xSnout, -0.004]],
     ],
     22
   );
   const botProf = sampleBezierChain(
     [
       [[-0.085, -0.045], [-0.02, -0.075], [0.07, -0.095], [0.185, -0.084]],
-      [[0.185, -0.084], [0.295, -0.072], [0.324, -0.036], [0.344, -0.024]],
+      [[0.185, -0.084], [0.295, -0.072], [0.324, -0.046], [0.345, -0.036]],
     ],
     22
   );
@@ -575,7 +584,7 @@ function createAurora3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const evalTop = (x: number) => interpCurveY(topProf, x);
   const evalBot = (x: number) => interpCurveY(botProf, x);
-  const evalUpperPalate = () => -0.018;
+  const evalUpperPalate = () => -0.02;
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, xHead);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
   const auroraMask = bodySpineOutlineMask(
@@ -622,7 +631,7 @@ function createAurora3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       xEnd: xSnout - 0.01,
       uSteps: 16,
       vSteps: 18,
-      evalTopY: () => -0.018,
+      evalTopY: () => -0.02,
       evalBotY: evalBot,
       evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)) * 0.9,
       mapUV,
@@ -799,11 +808,20 @@ function createAurora3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     ]);
     fc.fillRect(-0.16, -0.1, 0.18, 0.16);
   }, maxAnisotropy, false, 0.0008, { transparent: true, opacity: 0.88 });
+  const pecZ = surfaceZAt(
+    evalTop,
+    evalUnifiedBot,
+    (x) => evalZ(x, (x - xTail) / (xSnout - xTail)),
+    0.13,
+    -0.024,
+    0.22,
+    1.0
+  ) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.13, -0.024, 0.062);
+  pecLeft.position.set(0.13, -0.024, pecZ);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.13, -0.024, -0.062);
+  pecRight.position.set(0.13, -0.024, -pecZ);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -880,7 +898,7 @@ function createNarwhal3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const botProf = sampleBezierChain(
     [
       [[-0.245, -0.032], [-0.135, -0.09], [0.015, -0.12], [0.135, -0.106]],
-      [[0.135, -0.106], [0.225, -0.1], [0.258, -0.074], [0.274, -0.064]],
+      [[0.135, -0.106], [0.225, -0.1], [0.258, -0.076], [0.276, -0.068]],
     ],
     22
   );
@@ -1099,13 +1117,22 @@ function createNarwhal3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     fc.quadraticCurveTo(-0.065, -0.068, -0.102, -0.052);
     fc.stroke();
   }, maxAnisotropy, false, 0.001);
+  const pecZ = surfaceZAt(
+    evalTop,
+    evalUnifiedBot,
+    (x) => evalZ(x, (x - xTail) / (xSnout - xTail)),
+    0.055,
+    -0.052,
+    0.22,
+    1.0
+  ) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.055, -0.052, 0.09);
-  pecLeft.rotation.x = 0.28;
+  pecLeft.position.set(0.055, -0.052, pecZ);
+  pecLeft.rotation.x = -0.24;
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.055, -0.052, -0.09);
-  pecRight.rotation.x = -0.28;
+  pecRight.position.set(0.055, -0.052, -pecZ);
+  pecRight.rotation.x = 0.24;
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -1204,7 +1231,7 @@ function createSeadragon3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       [[sx(-0.378), sy(0.055)], [sx(-0.255), sy(0.016)], [sx(-0.165), sy(0.034)], [sx(-0.052), sy(0.082)]],
       [[sx(-0.052), sy(0.082)], [sx(0.04), sy(0.094)], [sx(0.095), sy(0.078)], [sx(0.145), sy(0.064)]],
       [[sx(0.145), sy(0.064)], [sx(0.212), sy(0.056)], [sx(0.252), sy(0.032)], [sx(0.292), sy(0.004)]],
-      [[sx(0.292), sy(0.004)], [sx(0.345), sy(-0.004)], [sx(0.395), sy(-0.006)], [sx(0.444), sy(0)]],
+      [[sx(0.292), sy(0.004)], [sx(0.345), sy(0.004)], [sx(0.395), sy(0.006)], [sx(0.444), sy(0.009)]],
     ],
     18
   );
@@ -1616,11 +1643,20 @@ function createSeadragon3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     fc.fillRect(-0.11, -0.08, 0.13, 0.14);
     drawFinRays(fc, [-0.005, -0.004], [[-0.07, -0.014], [-0.07, 0], [-0.07, 0.014], [-0.07, -0.028]], "rgba(255,255,255,0.7)", 0.0022);
   }, maxAnisotropy, false, 0.0008, { transparent: true, opacity: 0.92 });
+  const pecZ = surfaceZAt(
+    evalTop,
+    evalUnifiedBot,
+    (x) => evalZ(x, (x - xTail) / (xSnout - xTail)),
+    sx(0.182),
+    sy(-0.014),
+    0.22,
+    1.0
+  ) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(sx(0.182), sy(-0.014), 0.038);
+  pecLeft.position.set(sx(0.182), sy(-0.014), pecZ);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(sx(0.182), sy(-0.014), -0.038);
+  pecRight.position.set(sx(0.182), sy(-0.014), -pecZ);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -1715,14 +1751,14 @@ function createAxolotl3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const topProf = sampleBezierChain(
     [
       [[-0.205, 0.022], [-0.105, 0.076], [0.055, 0.096], [0.178, 0.104]],
-      [[0.178, 0.104], [0.278, 0.112], [0.33, 0.062], [xSnout, -0.02]],
+      [[0.178, 0.104], [0.278, 0.112], [0.33, 0.062], [xSnout, -0.016]],
     ],
     22
   );
   const botProf = sampleBezierChain(
     [
       [[-0.205, -0.022], [-0.09, -0.078], [0.052, -0.106], [0.175, -0.094]],
-      [[0.175, -0.094], [0.288, -0.088], [0.322, -0.05], [0.338, -0.036]],
+      [[0.175, -0.094], [0.288, -0.088], [0.324, -0.058], [0.34, -0.048]],
     ],
     22
   );
@@ -1744,7 +1780,7 @@ function createAxolotl3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     [1, "#ffe8f5"],
   ]);
   bc.fillRect(-0.32, -0.22, 0.78, 0.44);
-  drawGlow(bc, 0.08, -0.058, 0.21, 0.045, 0, "255,255,255", 0.36);
+  drawGlow(bc, 0.08, -0.058, 0.21, 0.045, 0, "255,255,255", 0.15);
 
   drawStar4Canvas(bc, 0.06, -0.042, 0.013, CRYS);
   drawStar4Canvas(bc, -0.03, -0.026, 0.015, CRYS);
@@ -1771,7 +1807,7 @@ function createAxolotl3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const evalTop = (x: number) => interpCurveY(topProf, x);
   const evalBot = (x: number) => interpCurveY(botProf, x);
-  const evalUpperPalate = () => -0.032;
+  const evalUpperPalate = () => -0.033;
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, xHead);
 
   const bodyGeo = track(
@@ -1809,7 +1845,7 @@ function createAxolotl3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       xEnd: xSnout - 0.014,
       uSteps: 16,
       vSteps: 18,
-      evalTopY: () => -0.03,
+      evalTopY: () => -0.032,
       evalBotY: evalBot,
       evalHalfZ: (x) => evalZ(x, (x - xTail) / (xSnout - xTail)) * 0.9,
       mapUV,
@@ -1884,14 +1920,16 @@ function createAxolotl3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     [0.14, 0.02, 2.42, 0.142],
     [0.138, -0.018, 2.82, 0.124],
   ];
+  const evalAxoZ = (x: number) => evalZ(x, (x - xTail) / (xSnout - xTail));
   const gillMeshes: { mesh: THREE.Object3D; baseRotY: number; phase: number }[] = [];
   for (const s of [1, -1]) {
     gillConfigs.forEach(([gx, gy, rotZ, gLen], gi) => {
       const obj = makeFeatheredGillObj(gLen);
+      const gz = surfaceZAt(evalTop, evalUnifiedBot, evalAxoZ, gx, gy, 0.22, 1.0) + 0.004;
       const gg = new THREE.Group();
-      gg.position.set(gx, gy, s * 0.095);
+      gg.position.set(gx, gy, s * gz);
       gg.rotation.z = rotZ;
-      const baseRotY = s * -0.42;
+      const baseRotY = s * 0.38;
       gg.rotation.y = baseRotY;
       gg.add(obj.mesh);
       bodyGroup.add(gg);
@@ -1918,16 +1956,17 @@ function createAxolotl3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   }, maxAnisotropy, false, 0.001);
 
   const feet: { g: THREE.Group; baseRotZ: number; phase: number }[] = [];
-  for (const [fx, fy, fz, baseRotZ, ph] of [
-    [0.088, -0.058, 0.082, -0.36, 0],
-    [0.088, -0.058, -0.082, -0.36, Math.PI],
-    [-0.095, -0.048, 0.074, -0.72, Math.PI],
-    [-0.095, -0.048, -0.074, -0.72, 0],
+  for (const [fx, fy, s, baseRotZ, ph] of [
+    [0.088, -0.058, 1, -0.36, 0],
+    [0.088, -0.058, -1, -0.36, Math.PI],
+    [-0.095, -0.048, 1, -0.72, Math.PI],
+    [-0.095, -0.048, -1, -0.72, 0],
   ] as const) {
+    const fz = s * (surfaceZAt(evalTop, evalUnifiedBot, evalAxoZ, fx, fy, 0.22, 1.0) + 0.006);
     const fg = new THREE.Group();
     fg.position.set(fx, fy, fz);
     fg.rotation.z = baseRotZ;
-    fg.rotation.x = fz > 0 ? 0.34 : -0.34;
+    fg.rotation.x = s > 0 ? -0.32 : 0.32;
     const fm = feesClone(footAsset.mesh);
     fg.add(fm);
     bodyGroup.add(fg);
@@ -2074,7 +2113,7 @@ function createWhaleshark3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const botProf = sampleBezierChain(
     [
       [[-0.232, -0.022], [-0.108, -0.068], [0.052, -0.108], [0.195, -0.092]],
-      [[0.195, -0.092], [0.326, -0.082], [0.358, -0.038], [0.376, -0.026]],
+      [[0.195, -0.092], [0.326, -0.082], [0.358, -0.048], [0.376, -0.042]],
     ],
     22
   );
@@ -2368,13 +2407,22 @@ function createWhaleshark3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     drawStar4Canvas(fc, -0.068, -0.062, 0.011, STAR, rgbaHex(CYAN, 0.34));
     drawStar4Canvas(fc, -0.118, -0.105, 0.01, STAR, rgbaHex(CYAN, 0.34));
   }, maxAnisotropy, false, 0.0011);
+  const pecZ = surfaceZAt(
+    evalTop,
+    evalUnifiedBot,
+    (x) => evalZ(x, (x - xTail) / (xSnout - xTail)),
+    0.118,
+    -0.044,
+    0.22,
+    1.0
+  ) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.118, -0.044, 0.092);
-  pecLeft.rotation.x = 0.34;
+  pecLeft.position.set(0.118, -0.044, pecZ);
+  pecLeft.rotation.x = -0.3;
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.118, -0.044, -0.092);
-  pecRight.rotation.x = -0.34;
+  pecRight.position.set(0.118, -0.044, -pecZ);
+  pecRight.rotation.x = 0.3;
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 

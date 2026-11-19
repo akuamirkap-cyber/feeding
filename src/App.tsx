@@ -46,6 +46,7 @@ export default function App() {
   const [banner, setBanner] = useState<Banner | null>(null);
   const [feedMsg, setFeedMsg] = useState<string | null>(null);
   const [showTrophies, setShowTrophies] = useState(false);
+  const [hasEnteredPlay, setHasEnteredPlay] = useState(false);
   const showTrophiesRef = useRef(showTrophies);
   showTrophiesRef.current = showTrophies;
 
@@ -55,7 +56,10 @@ export default function App() {
     endedRecorded: false,
   });
 
-  const speciesIcons = useMemo(() => SPECIES.map((sp) => spriteDataURL(sp, 92, 0)), []);
+  const speciesIcons = useMemo(
+    () => (hasEnteredPlay ? SPECIES.map((sp) => spriteDataURL(sp, 92, 0)) : []),
+    [hasEnteredPlay]
+  );
   const coinImg = useMemo(() => coinURL(), []);
 
   const updateSave = (next: SaveData) => {
@@ -68,10 +72,9 @@ export default function App() {
   useEffect(() => {
     const cv = canvasRef.current;
     if (!cv) return;
-    const g = new Game(cv);
+    const g = new Game(cv, { reef3D: saveRef.current.reef3D, pixelMode: false });
     gameRef.current = g;
     g.speedScale = saveRef.current.speedPref;
-    g.setReef3D(saveRef.current.reef3D);
 
     let bannerTimer: number | undefined;
     let feedTimer: number | undefined;
@@ -219,12 +222,14 @@ export default function App() {
     };
   }, []);
 
-  // Attach minimap canvas reference when playing
+  // Attach minimap canvas reference & toggle menu attract-mode throttling
   useEffect(() => {
     if (gameRef.current) {
       gameRef.current.minimap = screen === "play" ? minimapRef.current : null;
+      gameRef.current.setMenuMode(screen === "menu");
+      gameRef.current.setMenuPaused(screen === "menu" && showTrophies);
     }
-  }, [screen, hud?.alive]);
+  }, [screen, hud?.alive, showTrophies]);
 
   // Input listeners while playing
   useEffect(() => {
@@ -329,16 +334,22 @@ export default function App() {
     };
   }, []);
 
-  const handlePlay = () => {
+  const handlePlay = (skinIdOverride?: string) => {
     sfx.init();
     const g = gameRef.current;
     if (!g || !ready) return;
-    const skin = SKINS.find((s) => s.id === save.skin) || SKINS[0];
+    const chosenId = typeof skinIdOverride === "string" ? skinIdOverride : save.skin;
+    if (chosenId !== save.skin) {
+      updateSave({ ...save, skin: chosenId });
+    }
+    const skin = SKINS.find((s) => s.id === chosenId) || SKINS[0];
     const playSkin = { ...skin, is3D: !!(save.mode3D && skin.supports3D) };
     runTrackRef.current = { rank1Recorded: false, peakRecorded: false, endedRecorded: false };
+    setHasEnteredPlay(true);
     setShowTrophies(false);
     setDeath(null);
     setBanner(null);
+    g.setMenuMode(false);
     setScreen("play");
     g.start({
       name: save.name.trim() || "Kamu",
@@ -413,6 +424,7 @@ export default function App() {
           onOpenTrophies={() => setShowTrophies(true)}
           loading={!ready}
           loadPct={loadPct}
+          paused={showTrophies}
         />
       )}
 
@@ -547,7 +559,7 @@ export default function App() {
               death={death}
               prevBest={prevBest}
               coinImg={coinImg}
-              onPlayAgain={handlePlay}
+              onPlayAgain={() => handlePlay()}
               onReturnMenu={handleReturnMenu}
             />
           )}

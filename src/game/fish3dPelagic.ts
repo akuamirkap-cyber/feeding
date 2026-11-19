@@ -28,7 +28,7 @@ import {
   smoothstep,
   surfaceZAt,
 } from "./fish3dShared";
-import type { Fish3DRig, Pt } from "./fish3dShared";
+import type { Fish3DRig, Pt, SharedRigContext } from "./fish3dShared";
 
 function sortAscX(pts: Pt[]): Pt[] {
   return [...pts].sort((a, b) => a[0] - b[0]);
@@ -89,7 +89,7 @@ function createBarracuda3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       [
         [to3D(-0.318, 0.032), to3D(-0.256, 0.034), to3D(-0.165, 0.054), to3D(0.195, 0.115)],
         [to3D(0.195, 0.115), to3D(0.265, 0.128), to3D(0.352, 0.128), to3D(0.4, 0.102)],
-        [to3D(0.4, 0.102), to3D(0.456, 0.062), to3D(0.474, -0.024), to3D(0.454, -0.058)],
+        [to3D(0.4, 0.102), to3D(0.434, 0.072), to3D(0.454, 0.024), to3D(xSnoutL, -0.008)],
       ],
       24
     )
@@ -98,7 +98,7 @@ function createBarracuda3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const evalZ = (x: number) => {
     const t = clamp((x - xTail) / (xSnoutL - xTail), 0, 1);
     const base = 0.016 + 0.068 * Math.sin(Math.pow(t, 0.78) * Math.PI);
-    return x > 0.28 ? base * clamp(1 - (x - 0.28) / 0.22, 0.26, 1) : base;
+    return x > 0.28 ? base * clamp(1 - (x - 0.28) / 0.22, 0.34, 1) : base;
   };
 
   const { mapUV, beginCanvas2D } = createWorldMapper(-0.36, 0.5, -0.16, 0.16, 512);
@@ -205,7 +205,7 @@ function createBarracuda3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const hy = -0.03;
   const evalUpperPalate = (x: number) => {
     const t = clamp((x - (hx - 0.012)) / (xSnoutU - (hx - 0.012)), 0, 1);
-    return -0.03 + 0.068 * Math.pow(t, 0.85);
+    return -0.03 + 0.06 * Math.pow(t, 0.85);
   };
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx, 0.032, 0.014);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
@@ -257,7 +257,7 @@ function createBarracuda3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       vSteps: 20,
       evalTopY: (x) => {
         const t = clamp((x - (hx - 0.012)) / (xSnoutL - (hx - 0.012)), 0, 1);
-        return -0.03 + 0.08 * Math.pow(t, 0.88);
+        return -0.03 + 0.046 * Math.pow(t, 0.88);
       },
       evalBotY: evalBot,
       evalHalfZ: (x) => evalZ(x) * 0.96,
@@ -303,7 +303,7 @@ function createBarracuda3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     (t) => {
       const x = hx + 0.028 + (0.184 - 0.028) * t;
       const lt = clamp((x - (hx - 0.012)) / (xSnoutL - (hx - 0.012)), 0, 1);
-      const topLocal = -0.03 + 0.08 * Math.pow(lt, 0.88) - hy;
+      const topLocal = -0.03 + 0.046 * Math.pow(lt, 0.88) - hy;
       return topLocal + 0.004;
     },
     (t) => {
@@ -404,11 +404,12 @@ function createBarracuda3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       [-0.022, -0.058],
     ]);
   }, maxAnisotropy, false, 0.0013);
+  const pecZ = surfaceZAt(evalTop, evalUnifiedBot, evalZ, 0.184, -0.064, 0.22, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.184, -0.064, 0.068);
+  pecLeft.position.set(0.184, -0.064, pecZ);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.184, -0.064, -0.068);
+  pecRight.position.set(0.184, -0.064, -pecZ);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -459,6 +460,250 @@ function createBarracuda3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 // 2. SHARK FAMILY — Bruce (`shark`), Bruce Elegan (`shark_sleek`), Toto (`leopard`)
 // Exact 2D-matched silhouettes, world-UV markings & PROPER backward-swept dorsal fins!
 // =====================================================================================
+const SHARK_SATIN_MAT: Partial<THREE.MeshPhysicalMaterialParameters> = {
+  roughness: 0.84,
+  metalness: 0.0,
+  clearcoat: 0.02,
+  clearcoatRoughness: 0.72,
+  envMapIntensity: 0.08,
+  emissiveIntensity: 0.1,
+};
+
+function evalJawSurfaceY(evalTopY: (x: number) => number, evalBotY: (x: number) => number, x: number, zFrac: number, isUpper: boolean): number {
+  const yt = evalTopY(x);
+  const yb = evalBotY(x);
+  const mid = (yt + yb) * 0.5;
+  const hh = Math.max(0.004, (yt - yb) * 0.5);
+  const c = Math.sqrt(Math.max(0.05, 1 - zFrac * zFrac));
+  return isUpper ? mid - hh * c : mid + hh * c;
+}
+
+function buildSharkTeethGroup(
+  track: <T extends { dispose: () => void }>(x: T) => T,
+  mat: THREE.Material,
+  count: number,
+  xStart: number,
+  xEnd: number,
+  yAt: (x: number, zFrac: number, t: number) => number,
+  zMaxFn: (x: number) => number,
+  zFracFn: (t: number) => number,
+  widthFn: (t: number) => number,
+  heightFn: (t: number) => number,
+  pointUp: boolean,
+  tiltZ: number
+): { group: THREE.Group; setScaleY: (s: number) => void } {
+  const group = new THREE.Group();
+  // Clean 2D-matched triangular shark tooth with embedded root (-0.34..0) so base NEVER floats
+  const shape = new THREE.Shape();
+  shape.moveTo(-0.5, -0.34);
+  shape.lineTo(-0.48, 0.0);
+  shape.quadraticCurveTo(-0.18, 0.55, 0.06, 1.0);
+  shape.quadraticCurveTo(0.24, 0.52, 0.48, 0.0);
+  shape.lineTo(0.5, -0.34);
+  shape.closePath();
+
+  const baseGeo = track(
+    new THREE.ExtrudeGeometry(shape, {
+      depth: 0.0026,
+      bevelEnabled: false,
+      curveSegments: 5,
+    })
+  );
+  baseGeo.translate(0, 0, -0.0013);
+
+  const items: { mesh: THREE.Mesh; baseH: number }[] = [];
+  for (let i = 0; i < count; i++) {
+    const t = count <= 1 ? 0.5 : i / (count - 1);
+    const x = xStart + (xEnd - xStart) * t;
+    const zFrac = clamp(zFracFn(t), 0.05, 0.82);
+    const y = yAt(x, zFrac, t);
+    const zAbs = zMaxFn(x) * zFrac;
+    const w = widthFn(t);
+    const h = heightFn(t);
+    const yawAngle = 0.14 + t * 0.52;
+    const sides = zAbs > 0.004 ? [1, -1] : [0];
+    for (const s of sides) {
+      const m = new THREE.Mesh(baseGeo, mat);
+      m.position.set(x, y, s * zAbs);
+      m.scale.set(w, h, 1);
+      m.rotation.z = (pointUp ? 0 : Math.PI) + tiltZ;
+      m.rotation.y = s * yawAngle;
+      m.rotation.x = s * (pointUp ? 0.16 : -0.16);
+      group.add(m);
+      items.push({ mesh: m, baseH: h });
+    }
+  }
+  return {
+    group,
+    setScaleY: (s: number) => {
+      for (const it of items) it.mesh.scale.y = it.baseH * s;
+    },
+  };
+}
+
+function makeSharkLowerJawTex(
+  beginCanvas2D: (c: CanvasRenderingContext2D, ox?: number, oy?: number) => void,
+  ox2: number,
+  oy2: number,
+  maxAnisotropy: number,
+  whiteHex: string,
+  shadeHex: string,
+  outlineHex: string,
+  evalLowerTop: (x: number) => number,
+  xHinge: number,
+  xEnd: number
+): THREE.CanvasTexture {
+  const cv = document.createElement("canvas");
+  cv.width = 256;
+  cv.height = 256;
+  const c = cv.getContext("2d")!;
+  c.fillStyle = whiteHex;
+  c.fillRect(0, 0, 256, 256);
+
+  beginCanvas2D(c, ox2, oy2);
+  const g = c.createLinearGradient(0, 0.0, 0, 0.21);
+  g.addColorStop(0, "#ffffff");
+  g.addColorStop(0.58, whiteHex);
+  g.addColorStop(1, mixHex(whiteHex, shadeHex, 0.42));
+  c.fillStyle = g;
+  c.fillRect(-0.4, -0.26, 0.96, 0.56);
+
+  // Subtle lip line only forward of mouth hinge (never across the chest!)
+  c.strokeStyle = rgbaHex(outlineHex, 0.52);
+  c.lineWidth = 0.0048;
+  c.lineCap = "round";
+  c.beginPath();
+  for (let i = 0; i <= 14; i++) {
+    const wx = xHinge + ((xEnd - xHinge) * i) / 14;
+    const wy2 = -evalLowerTop(wx) - oy2;
+    const px = wx - ox2;
+    if (i === 0) c.moveTo(px, wy2);
+    else c.lineTo(px, wy2);
+  }
+  c.stroke();
+  c.restore();
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function addSharkGumArch(
+  track: <T extends { dispose: () => void }>(x: T) => T,
+  parent: THREE.Object3D,
+  gumHex: string,
+  x0: number,
+  x1: number,
+  ptFn: (x: number, t: number) => THREE.Vector3,
+  thickness: number
+) {
+  const pts: THREE.Vector3[] = [];
+  const samples = 4;
+  for (let i = 0; i <= samples; i++) {
+    const t = i / samples;
+    const x = x0 + (x1 - x0) * t;
+    const p = ptFn(x, t);
+    pts.push(p);
+  }
+  for (let i = samples - 1; i >= 0; i--) {
+    const t = i / samples;
+    const x = x0 + (x1 - x0) * t;
+    const p = ptFn(x, t);
+    pts.push(new THREE.Vector3(p.x, p.y, -p.z));
+  }
+  const curve = new THREE.CatmullRomCurve3(pts);
+  const geo = track(new THREE.TubeGeometry(curve, 18, thickness, 7, false));
+  const mat = track(
+    new THREE.MeshPhysicalMaterial({
+      color: gumHex,
+      emissive: mixHex(gumHex, "#6a1828", 0.45),
+      emissiveIntensity: 0.2,
+      roughness: 0.58,
+      clearcoat: 0.08,
+    })
+  );
+  const mesh = new THREE.Mesh(geo, mat);
+  parent.add(mesh);
+  return mesh;
+}
+
+function createSharkOralParts(
+  ctx: SharedRigContext,
+  bodyGroup: THREE.Group,
+  lowerJawGroup: THREE.Group,
+  hx: number,
+  hy: number,
+  xEnd: number,
+  evalUpperPalate: (x: number) => number,
+  evalLowerTop: (x: number) => number,
+  zMax: number,
+  cavityCol: string,
+  tongueCol: string,
+  tongueSize: [number, number, number],
+  tongueX: number,
+  tongueY: number
+): { mouthInterior: THREE.Group; tongueMesh: THREE.Mesh } {
+  const { track } = ctx;
+  const mouthInterior = new THREE.Group();
+  mouthInterior.position.set(hx, hy, 0);
+  bodyGroup.add(mouthInterior);
+
+  const x0 = hx - 0.01;
+  const x1 = xEnd;
+  const throatGeo = track(
+    buildLoftedSurface({
+      xStart: x0,
+      xEnd: x1,
+      uSteps: 16,
+      vSteps: 16,
+      evalTopY: (x) => evalUpperPalate(x) + 0.004,
+      evalBotY: (x) => {
+        const u = clamp((x - x0) / (x1 - x0), 0, 1);
+        return Math.min(evalUpperPalate(x) - 0.022, evalLowerTop(x) - 0.048 * (1 - 0.3 * u));
+      },
+      evalHalfZ: (x) => {
+        const u = clamp((x - x0) / (x1 - x0), 0, 1);
+        return Math.max(0.008, zMax * (1 - 0.78 * Math.pow(u, 1.3)));
+      },
+      mapUV: (x, y) => [clamp((x - x0) / (x1 - x0), 0.02, 0.98), clamp((y - (hy - 0.06)) / 0.1, 0.02, 0.98)],
+      localOffsetX: hx,
+      localOffsetY: hy,
+      roundFront: true,
+    })
+  );
+  const cavityMat = track(
+    new THREE.MeshStandardMaterial({
+      color: cavityCol,
+      emissive: mixHex(cavityCol, "#000000", 0.55),
+      emissiveIntensity: 0.25,
+      roughness: 0.8,
+      side: THREE.DoubleSide,
+    })
+  );
+  const cavityMesh = new THREE.Mesh(throatGeo, cavityMat);
+  mouthInterior.add(cavityMesh);
+
+  const tongueMat = track(
+    new THREE.MeshPhysicalMaterial({
+      color: tongueCol,
+      emissive: tongueCol,
+      emissiveIntensity: 0.18,
+      roughness: 0.4,
+      clearcoat: 0.15,
+    })
+  );
+  const tongueGeo = track(new THREE.SphereGeometry(1, 14, 10));
+  tongueGeo.scale(tongueSize[0], tongueSize[1], tongueSize[2]);
+  const tongueMesh = new THREE.Mesh(tongueGeo, tongueMat);
+  tongueMesh.position.set(tongueX, tongueY, 0);
+  tongueMesh.rotation.z = -0.18;
+  lowerJawGroup.add(tongueMesh);
+
+  return { mouthInterior, tongueMesh };
+}
+
 function createSharkFamily3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   if (sp.style === "leopard") return createLeopard3DRig(sp, maxAnisotropy);
   if (sp.style === "shark_sleek") return createSharkSleek3DRig(sp, maxAnisotropy);
@@ -467,15 +712,15 @@ function createSharkFamily3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
 function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const pal = sp.pal;
-  const OL = pal.outline || "#16213e";
+  const OL = pal.outline || "#1a2130";
   const B = pal.body;
   const D = pal.dark;
-  const WHITE = pal.belly || "#ffffff";
+  const WHITE = pal.belly || "#fbfcff";
   const FIN = pal.fin || B;
-  const FINL = mixHex(FIN, "#c4d4f0", 0.36);
-  const FIND = mixHex(FIN, D, 0.5);
+  const FINL = mixHex(FIN, "#c4d4f0", 0.3);
+  const FIND = mixHex(FIN, D, 0.55);
 
-  const ctx = createRigContext(OL, "#4e4e4e");
+  const ctx = createRigContext(OL, "#dedede");
   const { track, uniforms, makeOutlineMat, makeFishMat } = ctx;
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
@@ -485,6 +730,7 @@ function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const xTail = -0.275;
   const hx = 0.206;
   const hy = -(0.044 + oy2); // -0.032
+  const xLip = 0.391;
   const xSnout = 0.464;
 
   const topPts = sortAscX(
@@ -493,50 +739,60 @@ function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
         [to3D(-0.275, -0.004), to3D(-0.2, -0.036), to3D(-0.1, -0.06), to3D(0.0, -0.076)],
         [to3D(0.0, -0.076), to3D(0.1, -0.104), to3D(0.2, -0.118), to3D(0.29, -0.114)],
         [to3D(0.29, -0.114), to3D(0.36, -0.112), to3D(0.422, -0.098), to3D(0.456, -0.078)],
-        [to3D(0.456, -0.078), to3D(0.472, -0.062), to3D(0.466, -0.044), to3D(0.452, -0.022)],
+        [to3D(0.456, -0.078), to3D(0.462, -0.068), to3D(0.464, -0.056), to3D(0.464, -0.044)],
       ],
       24
     )
   );
+  // Exact 2D Bruce chest/belly curve continuing up toward chin tip (x=0.362, y2=0.089 => y3=-0.077)
   const botPts = sortAscX(
     sampleBezierChain(
       [
         [to3D(-0.286, 0.038), to3D(-0.23, 0.064), to3D(-0.17, 0.118), to3D(-0.1, 0.166)],
         [to3D(-0.1, 0.166), to3D(-0.07, 0.184), to3D(-0.02, 0.208), to3D(0.06, 0.208)],
-        [to3D(0.06, 0.208), to3D(0.17, 0.205), to3D(0.245, 0.182), to3D(0.308, 0.112)],
-        [to3D(0.308, 0.112), to3D(0.34, 0.104), to3D(0.354, 0.092), to3D(0.364, 0.076)],
+        [to3D(0.06, 0.208), to3D(0.17, 0.205), to3D(0.245, 0.182), to3D(0.306, 0.123)],
+        [to3D(0.306, 0.123), to3D(0.348, 0.117), to3D(0.362, 0.098), to3D(0.368, 0.082)],
       ],
       24
     )
   );
 
+  // Smooth C1 torpedo cross-section tapering cleanly to a rounded cartoon shark snout
   const evalZ = (x: number) => {
     const t = clamp((x - xTail) / (xSnout - xTail), 0, 1);
-    const base = 0.02 + 0.132 * Math.sin(Math.pow(t, 0.72) * Math.PI);
-    return x > 0.26 ? base * clamp(1 - (x - 0.26) / 0.24, 0.26, 1) : base;
+    const env = Math.sin(Math.pow(t, 0.72) * Math.PI);
+    const snoutTaper = 1 - 0.42 * smoothstep(0.56, 1.0, t);
+    return 0.016 + 0.118 * env * snoutTaper;
   };
 
   const { mapUV, beginCanvas2D } = createWorldMapper(-0.32, 0.5, -0.24, 0.18, 512);
 
-  // Paint Bruce Flank: satin blue-grey upper, jagged ragged white underside + flecks + 3 gill slits
+  // Paint Bruce Flank: rich slate charcoal-blue matching 2D image 2 (compensating 3D light!) + crisp jagged white countershading & flecks
   const bodyCv = document.createElement("canvas");
   bodyCv.width = 512;
   bodyCv.height = 512;
   const bc = bodyCv.getContext("2d")!;
   beginCanvas2D(bc, 0, oy2);
 
+  const B_RICH = mixHex(B, D, 0.34);
+  const D_RICH = mixHex(D, "#1f2738", 0.26);
   bc.fillStyle = makeLin(bc, 0, -0.11, 0, 0.2, [
-    [0, mixHex(B, D, 0.25)],
-    [0.3, B],
-    [0.6, mixHex(B, D, 0.35)],
-    [1, D],
+    [0, mixHex(B_RICH, D_RICH, 0.3)],
+    [0.32, B_RICH],
+    [0.65, mixHex(B_RICH, D_RICH, 0.38)],
+    [1, D_RICH],
   ]);
   bc.fillRect(-0.4, -0.26, 0.96, 0.56);
 
-  drawGlow(bc, 0.0, -0.01, 0.3, 0.07, -0.06, "150,172,214", 0.55);
-  drawGlow(bc, 0.28, -0.07, 0.14, 0.03, 0.06, "170,190,228", 0.5);
+  drawGlow(bc, 0.0, -0.01, 0.28, 0.06, -0.05, "148,170,210", 0.16);
 
-  // Exact ragged flame-edged white belly from drawShark
+  bc.fillStyle = makeLin(bc, 0, -0.12, 0, -0.05, [
+    [0, "rgba(214,232,255,0.18)"],
+    [1, "rgba(214,232,255,0)"],
+  ]);
+  bc.fillRect(-0.35, -0.14, 0.85, 0.09);
+
+  // Signature 2D Bruce ragged countershading & cheek boundary
   bc.beginPath();
   bc.moveTo(0.5, -0.065);
   bc.lineTo(0.46, -0.056);
@@ -558,14 +814,14 @@ function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   bc.lineTo(-0.3, 0.3);
   bc.lineTo(0.5, 0.3);
   bc.closePath();
-  bc.fillStyle = makeLin(bc, 0, 0.0, 0, 0.2, [
+  bc.fillStyle = makeLin(bc, 0, 0.0, 0, 0.21, [
     [0, "#ffffff"],
     [0.55, WHITE],
-    [1, mixHex(WHITE, "#8fa2c2", 0.48)],
+    [1, mixHex(WHITE, "#8fa2c2", 0.44)],
   ]);
   bc.fill();
 
-  // White flecks
+  // Signature 2D Bruce white flecks where the grey breaks up
   bc.fillStyle = WHITE;
   for (const [fx, fy, fr, rot] of [
     [0.24, 0.022, 0.012, -1.1],
@@ -576,16 +832,41 @@ function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     drawBlob(bc, fx, fy, fr, fr * 0.36, rot);
   }
 
-  // 3 gill slits
+  // 3 subtle 2D-matched gill slits on the slate cheek
   bc.strokeStyle = rgbaHex(OL, 0.52);
-  bc.lineWidth = 0.0048;
+  bc.lineCap = "round";
+  bc.lineWidth = 0.005;
   for (let i = 0; i < 3; i++) {
-    const gx = 0.195 - i * 0.025;
+    const gx = 0.195 - i * 0.024;
     bc.beginPath();
     bc.moveTo(gx + 0.008, -0.05 + i * 0.004);
     bc.quadraticCurveTo(gx - 0.012, 0.0, gx + 0.004, 0.044 - i * 0.004);
     bc.stroke();
   }
+
+  // Mouth corner smile crease
+  bc.strokeStyle = rgbaHex(OL, 0.72);
+  bc.lineWidth = 0.0056;
+  bc.beginPath();
+  bc.moveTo(0.21, 0.046);
+  bc.quadraticCurveTo(0.19, 0.04, 0.186, 0.022);
+  bc.stroke();
+
+  // Nostril slit on the white snout
+  bc.strokeStyle = rgbaHex(OL, 0.78);
+  bc.lineWidth = 0.0054;
+  bc.beginPath();
+  bc.moveTo(0.418, -0.022);
+  bc.quadraticCurveTo(0.41, -0.014, 0.414, -0.004);
+  bc.stroke();
+
+  // Soft brow crease above eye
+  bc.strokeStyle = rgbaHex(D_RICH, 0.46);
+  bc.lineWidth = 0.0058;
+  bc.beginPath();
+  bc.ellipse(0.313, -0.048, 0.039, 0.042, 0, Math.PI * 0.55, Math.PI * 1.75);
+  bc.stroke();
+
   bc.restore();
 
   const bodyTex = track(new THREE.CanvasTexture(bodyCv));
@@ -594,19 +875,25 @@ function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const evalTop = (x: number) => interpCurveY(topPts, x);
   const evalBot = (x: number) => interpCurveY(botPts, x);
+  // Exact 2D Bruce upper palate: gentle curved lip from (0.206,-0.032) -> (0.391,-0.049), then upturned snout underside -> (0.464,+0.052)
   const evalUpperPalate = (x: number) => {
-    const t = clamp((x - (hx - 0.015)) / (xSnout - (hx - 0.015)), 0, 1);
-    return hy - 0.01 + 0.028 * Math.pow(t, 0.85);
+    if (x <= xLip) {
+      const t = clamp((x - hx) / (xLip - hx), 0, 1);
+      return -0.032 * (1 - t) + -0.049 * t - Math.sin(t * Math.PI) * 0.006;
+    }
+    const v = clamp((x - xLip) / (xSnout - xLip), 0, 1);
+    return -0.049 + 0.086 * Math.pow(v, 1.35);
   };
-  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx, 0.032, 0.014);
+  // Blend chest smoothly up to mouth hinge right at hx
+  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx - 0.004, 0.044, 0.012);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
 
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: xTail,
       xEnd: xSnout,
-      uSteps: 54,
-      vSteps: 28,
+      uSteps: 62,
+      vSteps: 30,
       evalTopY: evalTop,
       evalBotY: evalUnifiedBot,
       evalHalfZ: evalZ,
@@ -615,7 +902,7 @@ function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       rearBulge: 0.005,
     })
   );
-  const bodyMat = makeFishMat(bodyTex);
+  const bodyMat = makeFishMat(bodyTex, SHARK_SATIN_MAT);
   injectSpineShader(bodyMat, uniforms, 0, 0);
   const gwMask = bodySpineOutlineMask(
     evalMidY,
@@ -635,42 +922,154 @@ function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   upperJawGroup.position.set(hx, hy, 0);
   bodyGroup.add(upperJawGroup);
 
-  // Lower Chin Jaw (projects forward cleanly!)
+  // ---- Exact 2D-Matched Lower Mandible (continuous from chest to curved shark chin!) ----
   const lowerJawGroup = new THREE.Group();
   lowerJawGroup.position.set(hx, hy, 0);
   bodyGroup.add(lowerJawGroup);
+
+  const lStart = 0.15; // tucks inside chest behind hx=0.206
+  const lEnd = 0.368;
+  // Upper rim of lower jaw follows 2D curved arch from (0.206,-0.032) down-forward to (0.368,-0.072)
+  const evalLowerTop = (x: number) => {
+    if (x <= hx) return -0.036;
+    const u = clamp((x - hx) / (lEnd - hx), 0, 1);
+    return -0.034 * (1 - u) + -0.072 * u + Math.sin(u * Math.PI) * 0.006;
+  };
+  // Underside follows exact 2D chest-to-chin belly curve (-0.190 at chest -> -0.084 at chin tip)
+  const evalLowerBot = (x: number) => {
+    const b = evalBot(clamp(x, lStart, lEnd));
+    const u = clamp((x - hx) / (lEnd - hx), 0, 1);
+    // Smoothly taper chin underside up to meet evalLowerTop cleanly at lEnd
+    const chinLift = Math.pow(u, 3.2) * 0.012;
+    return Math.min(evalLowerTop(x) - 0.01, b + chinLift);
+  };
   const lGeo = track(
     buildLoftedSurface({
-      xStart: hx - 0.022,
-      xEnd: 0.364,
-      uSteps: 20,
-      vSteps: 20,
-      evalTopY: (x) => {
-        const t = clamp((x - (hx - 0.015)) / (0.364 - (hx - 0.015)), 0, 1);
-        return hy - 0.024 - 0.032 * t;
+      xStart: lStart,
+      xEnd: lEnd,
+      uSteps: 28,
+      vSteps: 24,
+      evalTopY: evalLowerTop,
+      evalBotY: evalLowerBot,
+      evalHalfZ: (x) => {
+        const u = clamp((x - lStart) / (lEnd - lStart), 0, 1);
+        return evalZ(x) * 0.88 * (1 - 0.54 * Math.pow(u, 2.0));
       },
-      evalBotY: evalBot,
-      evalHalfZ: (x) => evalZ(x) * 0.88,
       mapUV,
       localOffsetX: hx,
       localOffsetY: hy,
       roundFront: true,
-      rearInsetAt: (x) => (x < hx ? 0.78 + 0.2 * clamp((x - (hx - 0.022)) / 0.022, 0, 1) : 1),
+      rearInsetAt: (x) => (x < hx + 0.014 ? 0.62 + 0.36 * smoothstep(lStart, hx + 0.014, x) : 0.98),
     })
   );
+  const lowerTex = track(
+    makeSharkLowerJawTex(beginCanvas2D, 0, oy2, maxAnisotropy, WHITE, "#8ea3c4", OL, evalLowerTop, hx, lEnd)
+  );
+  const lowerMat = makeFishMat(lowerTex, SHARK_SATIN_MAT);
+  injectSpineShader(lowerMat, uniforms, hx, hy);
   lowerJawGroup.add(
-    new THREE.Mesh(lGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0042, jawOutlineMask(0.008, 0.044))), makeOutlineMat(hx, hy))
+    new THREE.Mesh(lGeo, lowerMat),
+    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0042, jawOutlineMask(0.0, 0.036))), makeOutlineMat(hx, hy))
   );
 
-  // Razor Shark Teeth on both jaws
-  const teethMat = makeTeethMat(track);
-  addToothConeRow(bodyGroup, track, 6, hx + 0.022, hx + 0.165, (t) => hy - 0.012 + t * 0.018, (t) => 0.044 * (1 - t * 0.65), 0.0068, 0.024, false, teethMat, 0.12);
-  addToothConeRow(lowerJawGroup, track, 5, 0.02, 0.135, (t) => -0.022 - t * 0.025, (t) => 0.038 * (1 - t * 0.62), 0.006, 0.021, true, teethMat, -0.14);
+  // ---- Deep Maroon Throat Wedge + Low Rose Tongue ----
+  const { mouthInterior, tongueMesh } = createSharkOralParts(
+    ctx,
+    bodyGroup,
+    lowerJawGroup,
+    hx,
+    hy,
+    hx + 0.136,
+    evalUpperPalate,
+    evalLowerTop,
+    0.044,
+    "#3b1019",
+    "#d96b7e",
+    [0.044, 0.009, 0.02],
+    0.068,
+    -0.026
+  );
 
-  const { mouthInterior, tongueMesh } = createOralParts(ctx, bodyGroup, lowerJawGroup, hx, hy, "#3b1019", "#d96b7e", [0.052, 0.038, 0.032]);
+  // Surface-hugging Pink Gum Arches & Bold Curved White Shark Teeth (100% seated on curved jaw surface!)
+  const upperZFrac = (t: number) => 0.56 - t * 0.28;
+  const lowerZFrac = (t: number) => 0.48 - t * 0.24;
+  const lHalfZAt = (x: number) => {
+    const u = clamp((x - lStart) / (lEnd - lStart), 0, 1);
+    return evalZ(x) * 0.88 * (1 - 0.54 * Math.pow(u, 2.0));
+  };
 
-  // First Dorsal Fin: EXACT 2D sweep! Leading root (+0.172, +0.112) sweeping UP & BACK to (-0.082, +0.234)
+  const upperGum = addSharkGumArch(
+    track,
+    bodyGroup,
+    "#ea96a2",
+    hx + 0.012,
+    0.386,
+    (x, t) => {
+      const zf = upperZFrac(t);
+      const y = evalJawSurfaceY(evalTop, evalUpperPalate, x, zf, true) + 0.002;
+      return new THREE.Vector3(x, y, evalZ(x) * zf);
+    },
+    0.0036
+  );
+  const lowerGum = addSharkGumArch(
+    track,
+    lowerJawGroup,
+    "#ea96a2",
+    0.012,
+    0.15,
+    (xLocal, t) => {
+      const wx = hx + xLocal;
+      const zf = lowerZFrac(t);
+      const y = evalJawSurfaceY(evalLowerTop, evalLowerBot, wx, zf, false) - hy - 0.002;
+      return new THREE.Vector3(xLocal, y, lHalfZAt(wx) * zf);
+    },
+    0.0034
+  );
+
+  const sharkToothMat = track(
+    new THREE.MeshPhysicalMaterial({
+      color: "#ffffff",
+      emissive: "#fffcf4",
+      emissiveIntensity: 0.55,
+      roughness: 0.24,
+      clearcoat: 0.08,
+    })
+  );
+  const upperTeethCtrl = buildSharkTeethGroup(
+    track,
+    sharkToothMat,
+    7,
+    hx + 0.018,
+    0.384,
+    (x, zf) => evalJawSurfaceY(evalTop, evalUpperPalate, x, zf, true) + 0.004,
+    evalZ,
+    upperZFrac,
+    (t) => 0.0165 + Math.sin(t * Math.PI) * 0.0045,
+    (t) => 0.016 + Math.sin(t * Math.PI) * 0.007 + t * 0.003,
+    false,
+    0.08
+  );
+  const upperTeeth = upperTeethCtrl.group;
+  bodyGroup.add(upperTeeth);
+
+  const lowerTeethCtrl = buildSharkTeethGroup(
+    track,
+    sharkToothMat,
+    6,
+    0.018,
+    0.148,
+    (xLocal, zf) => evalJawSurfaceY(evalLowerTop, evalLowerBot, hx + xLocal, zf, false) - hy - 0.004,
+    (xLocal) => lHalfZAt(hx + xLocal),
+    lowerZFrac,
+    (t) => 0.0145 + Math.sin(t * Math.PI) * 0.004,
+    (t) => 0.0145 + Math.sin(t * Math.PI) * 0.006 + t * 0.0025,
+    true,
+    -0.22
+  );
+  const lowerTeeth = lowerTeethCtrl.group;
+  lowerJawGroup.add(lowerTeeth);
+
+  // First Dorsal Fin: swept back (-0.082, +0.222) with crisp cartoon outline
   const d1Shape = new THREE.Shape();
   d1Shape.moveTo(...to3D(0.172, -0.1));
   d1Shape.bezierCurveTo(...to3D(0.1, -0.148), ...to3D(0.0, -0.204), ...to3D(-0.082, -0.222));
@@ -679,23 +1078,23 @@ function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   d1Shape.lineTo(...to3D(0.14, -0.052));
   d1Shape.closePath();
   bodyGroup.add(
-    makeSpineFinMesh(ctx, d1Shape, 0, 0, 0.0046, 0.0012, (fc) => {
+    makeSpineFinMesh(ctx, d1Shape, 0, 0, 0.0048, 0.0012, (fc) => {
       fc.fillStyle = makeLin(fc, 0.06, 0.06, -0.06, 0.22, [
-        [0, B],
-        [0.6, FIN],
+        [0, B_RICH],
+        [0.6, mixHex(FIN, D, 0.3)],
         [1, FINL],
       ]);
       fc.fillRect(-0.15, 0.02, 0.36, 0.24);
       fc.beginPath();
       fc.moveTo(...to3D(0.172, -0.1));
       fc.bezierCurveTo(...to3D(0.1, -0.148), ...to3D(0.0, -0.204), ...to3D(-0.082, -0.222));
-      fc.strokeStyle = rgbaHex(FINL, 0.85);
-      fc.lineWidth = 0.018;
+      fc.strokeStyle = rgbaHex(FINL, 0.55);
+      fc.lineWidth = 0.016;
       fc.stroke();
-    }, maxAnisotropy, true, 0.0015, undefined, finRootMaskY(0.088, 0.032, true)).mesh
+    }, maxAnisotropy, true, 0.003, SHARK_SATIN_MAT, finRootMaskY(0.088, 0.032, true)).mesh
   );
 
-  // Second Dorsal Fin: swept back (-0.128 -> -0.218 -> -0.20)
+  // Second Dorsal Fin
   const d2Shape = new THREE.Shape();
   d2Shape.moveTo(...to3D(-0.128, -0.036));
   d2Shape.bezierCurveTo(...to3D(-0.156, -0.06), ...to3D(-0.188, -0.066), ...to3D(-0.218, -0.056));
@@ -703,26 +1102,26 @@ function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   d2Shape.lineTo(...to3D(-0.13, -0.006));
   d2Shape.closePath();
   bodyGroup.add(
-    makeSpineFinMesh(ctx, d2Shape, 0, 0, 0.0036, 0.0009, (fc) => {
+    makeSpineFinMesh(ctx, d2Shape, 0, 0, 0.0038, 0.0009, (fc) => {
       fc.fillStyle = makeLin(fc, -0.14, 0.02, -0.21, 0.07, [
-        [0, B],
+        [0, B_RICH],
         [1, FINL],
       ]);
       fc.fillRect(-0.25, 0, 0.16, 0.1);
-    }, maxAnisotropy, true, 0.0014, undefined, finRootMaskY(0.032, 0.024, true)).mesh
+    }, maxAnisotropy, true, 0.0024, SHARK_SATIN_MAT, finRootMaskY(0.032, 0.024, true)).mesh
   );
 
-  // Anal / Pelvic Fin (pale belly color, swept back -0.162 -> -0.24)
+  // Anal / Pelvic Fin (pale belly color)
   const aShape = new THREE.Shape();
   aShape.moveTo(...to3D(-0.162, 0.1));
   aShape.bezierCurveTo(...to3D(-0.186, 0.124), ...to3D(-0.212, 0.136), ...to3D(-0.24, 0.132));
   aShape.quadraticCurveTo(...to3D(-0.228, 0.106), ...to3D(-0.215, 0.068));
   aShape.closePath();
   bodyGroup.add(
-    makeSpineFinMesh(ctx, aShape, 0, 0, 0.0034, 0.0009, (fc) => {
+    makeSpineFinMesh(ctx, aShape, 0, 0, 0.0036, 0.0009, (fc) => {
       fc.fillStyle = mixHex(WHITE, B, 0.22);
       fc.fillRect(-0.28, -0.16, 0.16, 0.12);
-    }, maxAnisotropy, true, 0.0013, undefined, finRootMaskY(-0.088, 0.024, false)).mesh
+    }, maxAnisotropy, true, 0.0024, SHARK_SATIN_MAT, finRootMaskY(-0.088, 0.024, false)).mesh
   );
 
   // Tall Heterocercal Notched Caudal Tail
@@ -740,62 +1139,74 @@ function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   tShape.bezierCurveTo(-0.115, -0.114, -0.055, -0.08, 0.019, -0.056);
   tShape.closePath();
   tailPivot.add(
-    makeSpineFinMesh(ctx, tShape, xTail, -0.006, 0.0044, 0.0011, (fc) => {
+    makeSpineFinMesh(ctx, tShape, xTail, -0.006, 0.0046, 0.0011, (fc) => {
       fc.fillStyle = makeLin(fc, 0, 0, -0.18, 0.06, [
-        [0, B],
-        [0.5, FIN],
+        [0, B_RICH],
+        [0.5, mixHex(FIN, D, 0.3)],
         [1, FIND],
       ]);
       fc.fillRect(-0.22, -0.18, 0.28, 0.44);
-      fc.strokeStyle = rgbaHex(FINL, 0.78);
-      fc.lineWidth = 0.016;
+      fc.strokeStyle = rgbaHex(FINL, 0.5);
+      fc.lineWidth = 0.015;
       fc.beginPath();
       fc.moveTo(0.025, 0.006);
       fc.bezierCurveTo(-0.025, 0.049, -0.1, 0.136, -0.171, 0.21);
       fc.stroke();
-    }, maxAnisotropy, false, 0.0015).mesh
+    }, maxAnisotropy, false, 0.0029, SHARK_SATIN_MAT).mesh
   );
 
-  // Broad Sweeping Pectoral Fins
+  // Broad Sweeping Pectoral Fins seated cleanly outside side flank
   const pShape = new THREE.Shape();
   pShape.moveTo(0.052, 0.004);
   pShape.bezierCurveTo(0.042, -0.062, 0.002, -0.132, -0.11, -0.164);
   pShape.quadraticCurveTo(-0.126, -0.16, -0.116, -0.138);
   pShape.bezierCurveTo(-0.082, -0.102, -0.086, -0.06, -0.072, -0.03);
   pShape.closePath();
-  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.0042, 0.001, (fc) => {
+  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.0044, 0.001, (fc) => {
     fc.fillStyle = makeLin(fc, 0.03, 0.0, -0.1, -0.15, [
-      [0, B],
-      [0.55, FIN],
+      [0, B_RICH],
+      [0.55, mixHex(FIN, D, 0.3)],
       [1, FINL],
     ]);
     fc.fillRect(-0.16, -0.2, 0.26, 0.24);
-    fc.strokeStyle = rgbaHex(FINL, 0.85);
-    fc.lineWidth = 0.016;
+    fc.strokeStyle = rgbaHex(FINL, 0.55);
+    fc.lineWidth = 0.015;
     fc.beginPath();
     fc.moveTo(0.052, 0.004);
     fc.bezierCurveTo(0.042, -0.062, 0.002, -0.132, -0.11, -0.164);
     fc.stroke();
-  }, maxAnisotropy, false, 0.0014);
+  }, maxAnisotropy, false, 0.0026, SHARK_SATIN_MAT);
+  const pecZ = surfaceZAt(evalTop, evalUnifiedBot, evalZ, 0.168, -0.092, 0.2, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.17, -0.088, 0.096);
+  pecLeft.position.set(0.168, -0.092, pecZ);
+  pecLeft.rotation.x = -0.24;
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.17, -0.088, -0.096);
+  pecRight.position.set(0.168, -0.092, -pecZ);
+  pecRight.rotation.x = 0.24;
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
   const pelvicFin = new THREE.Group();
   bodyGroup.add(pelvicFin);
 
+  // Flush, unclipped glossy cartoon shark eyes seated cleanly on cheek dome!
+  const ex = 0.318;
+  const ey = -(-0.048 + oy2); // +0.060
+  const ez = surfaceZAt(evalTop, evalUnifiedBot, evalZ, ex, ey, 0.2, 1.0) + 0.007;
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
-    ex: 0.318,
-    ey: -(-0.048 + oy2),
-    ez: surfaceZAt(evalTop, evalBot, evalZ, 0.318, -(-0.048 + oy2)),
-    er: 0.036,
+    ex,
+    ey,
+    ez,
+    er: 0.034,
+    sx: 0.9,
+    sy: 1.04,
+    yawRot: 0.26,
     irisColor: pal.iris || "#7a3b12",
     rimColor: OL,
   });
+  if (eyesNormal[0]?.parent) eyesNormal[0].parent.rotation.x = -0.1;
+  if (eyesNormal[1]?.parent) eyesNormal[1].parent.rotation.x = 0.1;
 
   const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.01, hy + 0.01, FINL, 0.056);
 
@@ -820,6 +1231,34 @@ function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     biteRing,
     biteRingMat,
     uniforms,
+    onCustomPose: (p, open) => {
+      const tightClamp = p.jaw < 0 ? clamp(-p.jaw, 0, 0.4) : 0;
+      const idleFactor = smoothstep(-0.06, 0.0, p.jaw);
+      const effOpen = clamp(open, 0, 1.15);
+
+      // Subtle snout lift + clean 2D-matched jaw swing (already has natural toothy smile gap at rotation 0!)
+      bodyGroup.rotation.z = -p.tilt + effOpen * 0.1;
+      lowerJawGroup.rotation.z = tightClamp > 0.04 ? tightClamp * 0.28 : 0.04 * (1 - effOpen) - effOpen * 0.44;
+
+      const showSmile = idleFactor > 0.1 || effOpen > 0.03;
+      mouthInterior.visible = showSmile;
+      if (showSmile) {
+        mouthInterior.rotation.z = -effOpen * 0.14;
+        mouthInterior.scale.set(1.0, clamp(0.28 + effOpen * 0.72, 0.22, 1.0), 1.0);
+      }
+      tongueMesh.visible = effOpen > 0.08;
+      tongueMesh.position.y = -0.025 - effOpen * 0.004;
+      upperGum.visible = effOpen > 0.08;
+      lowerGum.visible = effOpen > 0.08;
+
+      upperTeeth.visible = showSmile;
+      lowerTeeth.visible = showSmile;
+      if (showSmile) {
+        const tScale = clamp(0.42 + effOpen * 0.68, 0.42, 1.1);
+        upperTeethCtrl.setScaleY(tScale);
+        lowerTeethCtrl.setScaleY(tScale);
+      }
+    },
     dispose: () => {
       for (const d of ctx.disposables) d.dispose();
     },
@@ -828,15 +1267,15 @@ function createGreatWhite3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
 function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const pal = sp.pal;
-  const OL = pal.outline || "#16213e";
+  const OL = pal.outline || "#273a4a";
   const B = pal.body;
   const D = pal.dark;
-  const WHITE = pal.belly || "#ffffff";
+  const WHITE = pal.belly || "#eef5fa";
   const FIN = pal.fin || B;
-  const FINL = mixHex(FIN, "#d8e8f5", 0.4);
-  const FIND = mixHex(FIN, D, 0.45);
+  const FINL = mixHex(FIN, "#d8e8f5", 0.32);
+  const FIND = mixHex(FIN, D, 0.5);
 
-  const ctx = createRigContext(OL, "#4a4a4a");
+  const ctx = createRigContext(OL, "#dedede");
   const { track, uniforms, makeOutlineMat, makeFishMat } = ctx;
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
@@ -847,8 +1286,9 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const xTail = -0.285 + ox2;
   const hx = 0.198 + ox2;
-  const hy = -(0.036 + oy2);
-  const xSnout = 0.464 + ox2;
+  const hy = -(0.036 + oy2); // -0.031
+  const xLip = 0.399 + ox2;
+  const xSnout = 0.462 + ox2;
 
   const topPts = sortAscX(
     sampleBezierChain(
@@ -856,7 +1296,7 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
         [to3D(-0.285, 0.002), to3D(-0.18, -0.024), to3D(-0.08, -0.048), to3D(0.03, -0.068)],
         [to3D(0.03, -0.068), to3D(0.13, -0.084), to3D(0.24, -0.09), to3D(0.34, -0.084)],
         [to3D(0.34, -0.084), to3D(0.395, -0.08), to3D(0.436, -0.072), to3D(0.456, -0.056)],
-        [to3D(0.456, -0.056), to3D(0.468, -0.042), to3D(0.462, -0.026), to3D(0.445, -0.01)],
+        [to3D(0.456, -0.056), to3D(0.461, -0.048), to3D(0.462, -0.038), to3D(0.462, -0.028)],
       ],
       24
     )
@@ -866,8 +1306,8 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       [
         [to3D(-0.29, 0.038), to3D(-0.258, 0.044), to3D(-0.22, 0.06), to3D(-0.17, 0.082)],
         [to3D(-0.17, 0.082), to3D(-0.1, 0.114), to3D(-0.04, 0.132), to3D(0.04, 0.136)],
-        [to3D(0.04, 0.136), to3D(0.16, 0.136), to3D(0.24, 0.132), to3D(0.32, 0.095)],
-        [to3D(0.32, 0.095), to3D(0.348, 0.086), to3D(0.362, 0.078), to3D(0.37, 0.062)],
+        [to3D(0.04, 0.136), to3D(0.16, 0.136), to3D(0.24, 0.132), to3D(0.318, 0.098)],
+        [to3D(0.318, 0.098), to3D(0.354, 0.092), to3D(0.368, 0.074), to3D(0.372, 0.062)],
       ],
       24
     )
@@ -875,8 +1315,9 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const evalZ = (x: number) => {
     const t = clamp((x - xTail) / (xSnout - xTail), 0, 1);
-    const base = 0.018 + 0.106 * Math.sin(Math.pow(t, 0.72) * Math.PI);
-    return x > 0.24 ? base * clamp(1 - (x - 0.24) / 0.24, 0.26, 1) : base;
+    const env = Math.sin(Math.pow(t, 0.72) * Math.PI);
+    const snoutTaper = 1 - 0.42 * smoothstep(0.56, 1.0, t);
+    return 0.015 + 0.098 * env * snoutTaper;
   };
 
   const { mapUV, beginCanvas2D } = createWorldMapper(-0.34, 0.49, -0.18, 0.14, 512);
@@ -887,16 +1328,17 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const bc = bodyCv.getContext("2d")!;
   beginCanvas2D(bc, ox2, oy2);
 
+  const B_RICH = mixHex(B, D, 0.3);
+  const D_RICH = mixHex(D, "#223442", 0.22);
   bc.fillStyle = makeLin(bc, 0, -0.09, 0, 0.14, [
-    [0, mixHex(B, D, 0.18)],
-    [0.35, B],
-    [0.75, mixHex(B, D, 0.28)],
-    [1, D],
+    [0, mixHex(B_RICH, D_RICH, 0.25)],
+    [0.35, B_RICH],
+    [0.75, mixHex(B_RICH, D_RICH, 0.34)],
+    [1, D_RICH],
   ]);
   bc.fillRect(-0.4, -0.22, 0.94, 0.44);
-  drawGlow(bc, 0.0, -0.01, 0.32, 0.05, -0.04, "180,206,228", 0.48);
+  drawGlow(bc, 0.02, -0.01, 0.28, 0.046, -0.04, "164,196,220", 0.15);
 
-  // Clean wave white counter-shading from drawSharkSleek
   bc.beginPath();
   bc.moveTo(0.49, -0.055);
   bc.lineTo(0.456, -0.042);
@@ -909,12 +1351,13 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   bc.fillStyle = makeLin(bc, 0, 0.0, 0, 0.14, [
     [0, "#ffffff"],
     [0.55, WHITE],
-    [1, mixHex(WHITE, "#a8bfd4", 0.42)],
+    [1, mixHex(WHITE, "#9ab2ca", 0.4)],
   ]);
   bc.fill();
 
-  bc.strokeStyle = rgbaHex(OL, 0.48);
-  bc.lineWidth = 0.0044;
+  bc.strokeStyle = rgbaHex(OL, 0.52);
+  bc.lineCap = "round";
+  bc.lineWidth = 0.0048;
   for (let i = 0; i < 3; i++) {
     const gx = 0.175 - i * 0.022;
     bc.beginPath();
@@ -922,6 +1365,20 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     bc.quadraticCurveTo(gx - 0.01, 0.006, gx + 0.004, 0.04 - i * 0.003);
     bc.stroke();
   }
+
+  bc.strokeStyle = rgbaHex(OL, 0.76);
+  bc.lineWidth = 0.0052;
+  bc.beginPath();
+  bc.moveTo(0.415, -0.023);
+  bc.quadraticCurveTo(0.408, -0.016, 0.412, -0.007);
+  bc.stroke();
+
+  bc.strokeStyle = rgbaHex(D_RICH, 0.42);
+  bc.lineWidth = 0.0054;
+  bc.beginPath();
+  bc.ellipse(0.284, -0.038, 0.034, 0.036, 0, Math.PI * 0.55, Math.PI * 1.75);
+  bc.stroke();
+
   bc.restore();
 
   const bodyTex = track(new THREE.CanvasTexture(bodyCv));
@@ -931,18 +1388,22 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const evalTop = (x: number) => interpCurveY(topPts, x);
   const evalBot = (x: number) => interpCurveY(botPts, x);
   const evalUpperPalate = (x: number) => {
-    const t = clamp((x - (hx - 0.015)) / (xSnout - (hx - 0.015)), 0, 1);
-    return hy - 0.008 + 0.02 * Math.pow(t, 0.85);
+    if (x <= xLip) {
+      const t = clamp((x - hx) / (xLip - hx), 0, 1);
+      return -0.031 * (1 - t) + -0.043 * t - Math.sin(t * Math.PI) * 0.005;
+    }
+    const v = clamp((x - xLip) / (xSnout - xLip), 0, 1);
+    return -0.043 + 0.058 * Math.pow(v, 1.35);
   };
-  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx, 0.032, 0.014);
+  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx - 0.004, 0.04, 0.012);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
 
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: xTail,
       xEnd: xSnout,
-      uSteps: 54,
-      vSteps: 26,
+      uSteps: 62,
+      vSteps: 28,
       evalTopY: evalTop,
       evalBotY: evalUnifiedBot,
       evalHalfZ: evalZ,
@@ -951,7 +1412,7 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       rearBulge: 0.004,
     })
   );
-  const bodyMat = makeFishMat(bodyTex);
+  const bodyMat = makeFishMat(bodyTex, SHARK_SATIN_MAT);
   injectSpineShader(bodyMat, uniforms, 0, 0);
   const sleekMask = bodySpineOutlineMask(
     evalMidY,
@@ -970,41 +1431,148 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   upperJawGroup.position.set(hx, hy, 0);
   bodyGroup.add(upperJawGroup);
 
+  // ---- Exact 2D-Matched Sleek Lower Chin Jaw ----
   const lowerJawGroup = new THREE.Group();
   lowerJawGroup.position.set(hx, hy, 0);
   bodyGroup.add(lowerJawGroup);
-  const lEnd = 0.37 + ox2;
+  const lStart = 0.145 + ox2;
+  const lEnd = 0.372 + ox2;
+  const evalLowerTop = (x: number) => {
+    if (x <= hx) return -0.034;
+    const u = clamp((x - hx) / (lEnd - hx), 0, 1);
+    return -0.032 * (1 - u) + -0.064 * u + Math.sin(u * Math.PI) * 0.005;
+  };
+  const evalLowerBot = (x: number) => {
+    const b = evalBot(clamp(x, lStart, lEnd));
+    const u = clamp((x - hx) / (lEnd - hx), 0, 1);
+    const chinLift = Math.pow(u, 3.2) * 0.01;
+    return Math.min(evalLowerTop(x) - 0.009, b + chinLift);
+  };
   const lGeo = track(
     buildLoftedSurface({
-      xStart: hx - 0.022,
+      xStart: lStart,
       xEnd: lEnd,
-      uSteps: 20,
-      vSteps: 20,
-      evalTopY: (x) => {
-        const t = clamp((x - (hx - 0.015)) / (lEnd - (hx - 0.015)), 0, 1);
-        return hy - 0.016 - 0.02 * t;
+      uSteps: 28,
+      vSteps: 22,
+      evalTopY: evalLowerTop,
+      evalBotY: evalLowerBot,
+      evalHalfZ: (x) => {
+        const u = clamp((x - lStart) / (lEnd - lStart), 0, 1);
+        return evalZ(x) * 0.88 * (1 - 0.54 * Math.pow(u, 2.0));
       },
-      evalBotY: evalBot,
-      evalHalfZ: (x) => evalZ(x) * 0.88,
       mapUV,
       localOffsetX: hx,
       localOffsetY: hy,
       roundFront: true,
-      rearInsetAt: (x) => (x < hx ? 0.78 + 0.2 * clamp((x - (hx - 0.022)) / 0.022, 0, 1) : 1),
+      rearInsetAt: (x) => (x < hx + 0.014 ? 0.62 + 0.36 * smoothstep(lStart, hx + 0.014, x) : 0.98),
     })
   );
+  const lowerTex = track(
+    makeSharkLowerJawTex(beginCanvas2D, ox2, oy2, maxAnisotropy, WHITE, "#88a4bd", OL, evalLowerTop, hx, lEnd)
+  );
+  const lowerMat = makeFishMat(lowerTex, SHARK_SATIN_MAT);
+  injectSpineShader(lowerMat, uniforms, hx, hy);
   lowerJawGroup.add(
-    new THREE.Mesh(lGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.004, jawOutlineMask(0.008, 0.044))), makeOutlineMat(hx, hy))
+    new THREE.Mesh(lGeo, lowerMat),
+    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.004, jawOutlineMask(0.0, 0.036))), makeOutlineMat(hx, hy))
   );
 
-  const teethMat = makeTeethMat(track);
-  addToothConeRow(bodyGroup, track, 6, hx + 0.022, hx + 0.165, (t) => hy - 0.008 + t * 0.014, (t) => 0.036 * (1 - t * 0.65), 0.006, 0.021, false, teethMat, 0.12);
-  addToothConeRow(lowerJawGroup, track, 5, 0.02, 0.135, (t) => -0.016 - t * 0.018, (t) => 0.032 * (1 - t * 0.6), 0.0055, 0.018, true, teethMat, -0.14);
+  const { mouthInterior, tongueMesh } = createSharkOralParts(
+    ctx,
+    bodyGroup,
+    lowerJawGroup,
+    hx,
+    hy,
+    hx + 0.14,
+    evalUpperPalate,
+    evalLowerTop,
+    0.038,
+    "#4a242b",
+    "#d97886",
+    [0.04, 0.0085, 0.018],
+    0.068,
+    -0.022
+  );
 
-  const { mouthInterior, tongueMesh } = createOralParts(ctx, bodyGroup, lowerJawGroup, hx, hy, "#4a242b", "#d97886", [0.05, 0.034, 0.028]);
+  const upperZFrac = (t: number) => 0.54 - t * 0.26;
+  const lowerZFrac = (t: number) => 0.46 - t * 0.22;
+  const lHalfZAt = (x: number) => {
+    const u = clamp((x - lStart) / (lEnd - lStart), 0, 1);
+    return evalZ(x) * 0.88 * (1 - 0.54 * Math.pow(u, 2.0));
+  };
 
-  // Sleek swept dorsal fin (+0.110 -> -0.086, PROPER backward sweep!)
+  const upperGum = addSharkGumArch(
+    track,
+    bodyGroup,
+    "#eea5ad",
+    hx + 0.012,
+    0.382 + ox2,
+    (x, t) => {
+      const zf = upperZFrac(t);
+      const y = evalJawSurfaceY(evalTop, evalUpperPalate, x, zf, true) + 0.002;
+      return new THREE.Vector3(x, y, evalZ(x) * zf);
+    },
+    0.0034
+  );
+  const lowerGum = addSharkGumArch(
+    track,
+    lowerJawGroup,
+    "#eea5ad",
+    0.012,
+    0.154,
+    (xLocal, t) => {
+      const wx = hx + xLocal;
+      const zf = lowerZFrac(t);
+      const y = evalJawSurfaceY(evalLowerTop, evalLowerBot, wx, zf, false) - hy - 0.002;
+      return new THREE.Vector3(xLocal, y, lHalfZAt(wx) * zf);
+    },
+    0.0032
+  );
+
+  const sharkToothMat = track(
+    new THREE.MeshPhysicalMaterial({
+      color: "#ffffff",
+      emissive: "#fffcf4",
+      emissiveIntensity: 0.55,
+      roughness: 0.24,
+      clearcoat: 0.08,
+    })
+  );
+  const upperTeethCtrl = buildSharkTeethGroup(
+    track,
+    sharkToothMat,
+    7,
+    hx + 0.018,
+    0.382 + ox2,
+    (x, zf) => evalJawSurfaceY(evalTop, evalUpperPalate, x, zf, true) + 0.004,
+    evalZ,
+    upperZFrac,
+    (t) => 0.0155 + Math.sin(t * Math.PI) * 0.004,
+    (t) => 0.015 + Math.sin(t * Math.PI) * 0.006 + t * 0.0025,
+    false,
+    0.08
+  );
+  const upperTeeth = upperTeethCtrl.group;
+  bodyGroup.add(upperTeeth);
+
+  const lowerTeethCtrl = buildSharkTeethGroup(
+    track,
+    sharkToothMat,
+    6,
+    0.018,
+    0.152,
+    (xLocal, zf) => evalJawSurfaceY(evalLowerTop, evalLowerBot, hx + xLocal, zf, false) - hy - 0.004,
+    (xLocal) => lHalfZAt(hx + xLocal),
+    lowerZFrac,
+    (t) => 0.0135 + Math.sin(t * Math.PI) * 0.0035,
+    (t) => 0.014 + Math.sin(t * Math.PI) * 0.0055 + t * 0.002,
+    true,
+    -0.2
+  );
+  const lowerTeeth = lowerTeethCtrl.group;
+  lowerJawGroup.add(lowerTeeth);
+
+  // Sleek swept dorsal fin
   const d1Shape = new THREE.Shape();
   d1Shape.moveTo(...to3D(0.11, -0.068));
   d1Shape.bezierCurveTo(...to3D(0.055, -0.122), ...to3D(-0.018, -0.168), ...to3D(-0.086, -0.18));
@@ -1013,36 +1581,36 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   d1Shape.lineTo(...to3D(0.08, -0.044));
   d1Shape.closePath();
   bodyGroup.add(
-    makeSpineFinMesh(ctx, d1Shape, 0, 0, 0.0042, 0.001, (fc) => {
+    makeSpineFinMesh(ctx, d1Shape, 0, 0, 0.0044, 0.001, (fc) => {
       fc.fillStyle = makeLin(fc, 0.04, 0.05, -0.07, 0.18, [
-        [0, B],
-        [0.6, FIN],
+        [0, B_RICH],
+        [0.6, mixHex(FIN, D, 0.28)],
         [1, FINL],
       ]);
       fc.fillRect(-0.15, 0.01, 0.3, 0.22);
-      fc.strokeStyle = rgbaHex(FINL, 0.8);
-      fc.lineWidth = 0.016;
+      fc.strokeStyle = rgbaHex(FINL, 0.55);
+      fc.lineWidth = 0.015;
       fc.beginPath();
       fc.moveTo(...to3D(0.11, -0.068));
       fc.bezierCurveTo(...to3D(0.055, -0.122), ...to3D(-0.018, -0.168), ...to3D(-0.086, -0.18));
       fc.stroke();
-    }, maxAnisotropy, true, 0.0014, undefined, finRootMaskY(0.068, 0.028, true)).mesh
+    }, maxAnisotropy, true, 0.0028, SHARK_SATIN_MAT, finRootMaskY(0.068, 0.028, true)).mesh
   );
 
-  // Rear Anal/Pelvic Fin (-0.16 -> -0.232)
+  // Rear Anal/Pelvic Fin
   const aShape = new THREE.Shape();
   aShape.moveTo(...to3D(-0.16, 0.072));
   aShape.bezierCurveTo(...to3D(-0.184, 0.098), ...to3D(-0.208, 0.112), ...to3D(-0.232, 0.108));
   aShape.quadraticCurveTo(...to3D(-0.218, 0.084), ...to3D(-0.204, 0.054));
   aShape.closePath();
   bodyGroup.add(
-    makeSpineFinMesh(ctx, aShape, 0, 0, 0.0032, 0.0008, (fc) => {
+    makeSpineFinMesh(ctx, aShape, 0, 0, 0.0034, 0.0008, (fc) => {
       fc.fillStyle = makeLin(fc, -0.17, -0.06, -0.22, -0.11, [
-        [0, B],
+        [0, B_RICH],
         [1, FIND],
       ]);
       fc.fillRect(-0.28, -0.14, 0.15, 0.11);
-    }, maxAnisotropy, true, 0.0013, undefined, finRootMaskY(-0.064, 0.022, false)).mesh
+    }, maxAnisotropy, true, 0.0023, SHARK_SATIN_MAT, finRootMaskY(-0.064, 0.022, false)).mesh
   );
 
   // Sleek Forked Crescent Caudal Tail
@@ -1058,62 +1626,73 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   tShape.bezierCurveTo(-0.112, -0.087, -0.052, -0.055, 0.014, -0.027);
   tShape.closePath();
   tailPivot.add(
-    makeSpineFinMesh(ctx, tShape, xTail, -0.015, 0.004, 0.001, (fc) => {
+    makeSpineFinMesh(ctx, tShape, xTail, -0.015, 0.0042, 0.001, (fc) => {
       fc.fillStyle = makeLin(fc, 0.01, 0, -0.16, 0.05, [
-        [0, B],
-        [0.55, FIN],
+        [0, B_RICH],
+        [0.55, mixHex(FIN, D, 0.28)],
         [1, FIND],
       ]);
       fc.fillRect(-0.2, -0.14, 0.24, 0.38);
-      fc.strokeStyle = rgbaHex(FINL, 0.78);
-      fc.lineWidth = 0.016;
+      fc.strokeStyle = rgbaHex(FINL, 0.52);
+      fc.lineWidth = 0.015;
       fc.beginPath();
       fc.moveTo(0.018, 0.015);
-      tShape && fc.bezierCurveTo(-0.032, 0.053, -0.097, 0.129, -0.156, 0.205);
+      fc.bezierCurveTo(-0.032, 0.053, -0.097, 0.129, -0.156, 0.205);
       fc.stroke();
-    }, maxAnisotropy, false, 0.0014).mesh
+    }, maxAnisotropy, false, 0.0028, SHARK_SATIN_MAT).mesh
   );
 
-  // Sleek Pectoral Fins
+  // Sleek Pectoral Fins seated cleanly outside side flank
   const pShape = new THREE.Shape();
   pShape.moveTo(0.047, 0);
   pShape.bezierCurveTo(0.049, -0.057, 0.023, -0.122, -0.073, -0.154);
   pShape.quadraticCurveTo(-0.089, -0.15, -0.083, -0.13);
   pShape.bezierCurveTo(-0.057, -0.094, -0.061, -0.054, -0.049, -0.024);
   pShape.closePath();
-  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.0038, 0.001, (fc) => {
+  const pecObj = makeSpineFinMesh(ctx, pShape, 0, 0, 0.004, 0.001, (fc) => {
     fc.fillStyle = makeLin(fc, 0.03, 0, -0.08, -0.15, [
-      [0, B],
-      [0.55, FIN],
+      [0, B_RICH],
+      [0.55, mixHex(FIN, D, 0.28)],
       [1, FINL],
     ]);
     fc.fillRect(-0.12, -0.18, 0.2, 0.21);
-    fc.strokeStyle = rgbaHex(FINL, 0.8);
+    fc.strokeStyle = rgbaHex(FINL, 0.55);
     fc.lineWidth = 0.015;
     fc.beginPath();
     fc.moveTo(0.047, 0);
     fc.bezierCurveTo(0.049, -0.057, 0.023, -0.122, -0.073, -0.154);
     fc.stroke();
-  }, maxAnisotropy, false, 0.0014);
+  }, maxAnisotropy, false, 0.0025, SHARK_SATIN_MAT);
+  const pecZ = surfaceZAt(evalTop, evalUnifiedBot, evalZ, 0.145 + ox2, -0.066, 0.2, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.145 + ox2, -0.063, 0.084);
+  pecLeft.position.set(0.145 + ox2, -0.066, pecZ);
+  pecLeft.rotation.x = -0.24;
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.145 + ox2, -0.063, -0.084);
+  pecRight.position.set(0.145 + ox2, -0.066, -pecZ);
+  pecRight.rotation.x = 0.24;
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
   const pelvicFin = new THREE.Group();
   bodyGroup.add(pelvicFin);
 
+  const ex = 0.286 + ox2;
+  const ey = -(-0.038 + oy2);
+  const ez = surfaceZAt(evalTop, evalUnifiedBot, evalZ, ex, ey, 0.2, 1.0) + 0.007;
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
-    ex: 0.288 + ox2,
-    ey: -(-0.044 + oy2),
-    ez: surfaceZAt(evalTop, evalBot, evalZ, 0.288 + ox2, -(-0.044 + oy2)),
-    er: 0.034,
+    ex,
+    ey,
+    ez,
+    er: 0.031,
+    sx: 0.9,
+    sy: 1.04,
+    yawRot: 0.26,
     irisColor: pal.iris || "#7a3b12",
     rimColor: OL,
   });
+  if (eyesNormal[0]?.parent) eyesNormal[0].parent.rotation.x = -0.1;
+  if (eyesNormal[1]?.parent) eyesNormal[1].parent.rotation.x = 0.1;
 
   const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.01, hy + 0.008, FINL, 0.052);
 
@@ -1138,6 +1717,33 @@ function createSharkSleek3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     biteRing,
     biteRingMat,
     uniforms,
+    onCustomPose: (p, open) => {
+      const tightClamp = p.jaw < 0 ? clamp(-p.jaw, 0, 0.4) : 0;
+      const idleFactor = smoothstep(-0.06, 0.0, p.jaw);
+      const effOpen = clamp(open, 0, 1.15);
+
+      bodyGroup.rotation.z = -p.tilt + effOpen * 0.1;
+      lowerJawGroup.rotation.z = tightClamp > 0.04 ? tightClamp * 0.28 : 0.04 * (1 - effOpen) - effOpen * 0.44;
+
+      const showSmile = idleFactor > 0.1 || effOpen > 0.03;
+      mouthInterior.visible = showSmile;
+      if (showSmile) {
+        mouthInterior.rotation.z = -effOpen * 0.14;
+        mouthInterior.scale.set(1.0, clamp(0.28 + effOpen * 0.72, 0.22, 1.0), 1.0);
+      }
+      tongueMesh.visible = effOpen > 0.08;
+      tongueMesh.position.y = -0.022 - effOpen * 0.004;
+      upperGum.visible = effOpen > 0.08;
+      lowerGum.visible = effOpen > 0.08;
+
+      upperTeeth.visible = showSmile;
+      lowerTeeth.visible = showSmile;
+      if (showSmile) {
+        const tScale = clamp(0.42 + effOpen * 0.68, 0.42, 1.1);
+        upperTeethCtrl.setScaleY(tScale);
+        lowerTeethCtrl.setScaleY(tScale);
+      }
+    },
     dispose: () => {
       for (const d of ctx.disposables) d.dispose();
     },
@@ -1154,7 +1760,7 @@ function createLeopard3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const FIN = pal.fin;
   const FINT = pal.tail || pal.fin;
 
-  const ctx = createRigContext(OL, "#525252");
+  const ctx = createRigContext(OL, "#686868");
   const { track, uniforms, makeOutlineMat, makeFishMat } = ctx;
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
@@ -1164,15 +1770,16 @@ function createLeopard3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const xTail = -0.3;
   const hx = 0.322;
   const hy = -(0.046 + oy2); // -0.05
-  const xSnout = 0.456;
+  const xSnout = 0.458;
+  const lEnd = 0.408;
 
+  // Strictly monotonic in X so interpCurveY never zig-zags into a W-ribbon at the nose!
   const topPts = sortAscX(
     sampleBezierChain(
       [
         [to3D(-0.3, 0.008), to3D(-0.2, -0.03), to3D(-0.1, -0.048), to3D(0.0, -0.06)],
         [to3D(0.0, -0.06), to3D(0.12, -0.076), to3D(0.25, -0.08), to3D(0.33, -0.066)],
-        [to3D(0.33, -0.066), to3D(0.39, -0.054), to3D(0.44, -0.03), to3D(0.453, 0.002)],
-        [to3D(0.453, 0.002), to3D(0.458, 0.024), to3D(0.44, 0.032), to3D(0.414, 0.05)],
+        [to3D(0.33, -0.066), to3D(0.39, -0.054), to3D(0.436, -0.028), to3D(xSnout, 0.004)],
       ],
       24
     )
@@ -1182,7 +1789,7 @@ function createLeopard3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       [
         [to3D(-0.305, 0.05), to3D(-0.26, 0.058), to3D(-0.2, 0.07), to3D(-0.1, 0.084)],
         [to3D(-0.1, 0.084), to3D(0.05, 0.104), to3D(0.2, 0.108), to3D(0.3, 0.09)],
-        [to3D(0.3, 0.09), to3D(0.34, 0.086), to3D(0.38, 0.078), to3D(0.406, 0.05)],
+        [to3D(0.3, 0.09), to3D(0.345, 0.085), to3D(0.386, 0.075), to3D(lEnd, 0.062)],
       ],
       24
     )
@@ -1191,7 +1798,7 @@ function createLeopard3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const evalZ = (x: number) => {
     const t = clamp((x - xTail) / (xSnout - xTail), 0, 1);
     const base = 0.016 + 0.078 * Math.sin(Math.pow(t, 0.72) * Math.PI);
-    return x > 0.29 ? base * clamp(1 - (x - 0.29) / 0.2, 0.28, 1) : base;
+    return x > 0.29 ? base * clamp(1 - (x - 0.29) / 0.22, 0.34, 1) : base;
   };
 
   const { mapUV, beginCanvas2D } = createWorldMapper(-0.34, 0.49, -0.13, 0.1, 512);
@@ -1214,13 +1821,13 @@ function createLeopard3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   bc.fillStyle = makeLin(bc, 0, -0.08, 0, 0.105, [
     [0, mixHex(B, D, 0.42)],
     [0.3, B],
-    [0.62, mixHex(B, BEL, 0.55)],
-    [0.82, BEL],
+    [0.62, mixHex(B, BEL, 0.52)],
+    [0.84, mixHex(BEL, B, 0.14)],
     [1, mixHex(BEL, D, 0.3)],
   ]);
   bc.fillRect(-0.38, -0.18, 0.92, 0.36);
 
-  drawGlow(bc, 0.05, -0.02, 0.3, 0.03, -0.04, "255,246,206", 0.5);
+  drawGlow(bc, 0.05, -0.02, 0.28, 0.028, -0.04, "255,246,206", 0.16);
 
   // Saddles across the back
   paintLeopardSpots(bc, [
@@ -1247,6 +1854,10 @@ function createLeopard3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     [-0.238, 0.038, 0.009, 0.007, 0],
   ]);
 
+  // Nostril on overhanging snout
+  bc.fillStyle = rgbaHex(OL, 0.72);
+  drawBlob(bc, 0.428, 0.004, 0.005, 0.0035, 0.45);
+
   // 3 gill slits
   bc.strokeStyle = rgbaHex(OL, 0.46);
   bc.lineWidth = 0.004;
@@ -1265,19 +1876,25 @@ function createLeopard3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const evalTop = (x: number) => interpCurveY(topPts, x);
   const evalBot = (x: number) => interpCurveY(botPts, x);
+  // Roof of underslung mouth (hx..ux), then smooth underside of overhanging shark snout (ux..xSnout)
+  const ux = 0.412;
   const evalUpperPalate = (x: number) => {
-    const t = clamp((x - (hx - 0.012)) / (xSnout - (hx - 0.012)), 0, 1);
-    return hy - 0.002 + 0.006 * t;
+    if (x <= ux) {
+      const t = clamp((x - (hx - 0.012)) / (ux - (hx - 0.012)), 0, 1);
+      return hy + 0.005 * t;
+    }
+    const t = clamp((x - ux) / (xSnout - ux), 0, 1);
+    return hy + 0.005 + 0.018 * Math.pow(t, 1.35);
   };
-  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx, 0.032, 0.014);
+  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx, 0.028, 0.012);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
 
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: xTail,
       xEnd: xSnout,
-      uSteps: 54,
-      vSteps: 26,
+      uSteps: 56,
+      vSteps: 28,
       evalTopY: evalTop,
       evalBotY: evalUnifiedBot,
       evalHalfZ: evalZ,
@@ -1308,20 +1925,22 @@ function createLeopard3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   upperJawGroup.position.set(hx, hy, 0);
   bodyGroup.add(upperJawGroup);
 
-  // Lower Under-slung Jaw
+  // Lower Under-slung Jaw (cleanly below upper palate across full length hx..lEnd)
   const lowerJawGroup = new THREE.Group();
   lowerJawGroup.position.set(hx, hy, 0);
   bodyGroup.add(lowerJawGroup);
-  const lEnd = 0.406;
   const lGeo = track(
     buildLoftedSurface({
       xStart: hx - 0.022,
       xEnd: lEnd,
       uSteps: 18,
-      vSteps: 18,
-      evalTopY: () => hy - 0.008,
+      vSteps: 20,
+      evalTopY: (x) => {
+        const t = clamp((x - hx) / (lEnd - hx), 0, 1);
+        return hy - 0.004 + 0.006 * t;
+      },
       evalBotY: evalBot,
-      evalHalfZ: (x) => evalZ(x) * 0.85,
+      evalHalfZ: (x) => evalZ(x) * 0.84,
       mapUV,
       localOffsetX: hx,
       localOffsetY: hy,
@@ -1335,10 +1954,45 @@ function createLeopard3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   );
 
   const teethMat = makeTeethMat(track);
-  addToothConeRow(bodyGroup, track, 5, hx + 0.018, hx + 0.088, () => hy - 0.003, (t) => 0.032 * (1 - t * 0.55), 0.0042, 0.014, false, teethMat);
-  addToothConeRow(lowerJawGroup, track, 5, 0.016, 0.072, () => -0.006, (t) => 0.028 * (1 - t * 0.55), 0.0038, 0.012, true, teethMat);
+  addToothConeRow(
+    bodyGroup,
+    track,
+    5,
+    hx + 0.018,
+    lEnd - 0.008,
+    (t) => hy + 0.001 + 0.007 * t,
+    (t) => evalZ(hx + 0.018 + (lEnd - 0.008 - (hx + 0.018)) * t) * 0.62,
+    0.0032,
+    0.0095,
+    false,
+    teethMat
+  );
+  addToothConeRow(
+    lowerJawGroup,
+    track,
+    5,
+    0.016,
+    lEnd - hx - 0.016,
+    (t) => -0.002 + 0.003 * t,
+    (t) => evalZ(hx + 0.016 + (lEnd - hx - 0.032) * t) * 0.56,
+    0.0029,
+    0.0085,
+    true,
+    teethMat
+  );
 
-  const { mouthInterior, tongueMesh } = createOralParts(ctx, bodyGroup, lowerJawGroup, hx, hy, "#4a0f1a", "#e46c80", [0.038, 0.024, 0.026]);
+  const { mouthInterior, tongueMesh } = createOralParts(
+    ctx,
+    bodyGroup,
+    lowerJawGroup,
+    hx,
+    hy,
+    "#4a0f1a",
+    "#e46c80",
+    [0.032, 0.018, 0.022],
+    [0.022, 0.008, 0.014],
+    0.024
+  );
 
   // First Dorsal Fin: EXACT 2D sweep (+0.214 -> +0.122 -> +0.050) with leopard spots!
   const d1Shape = new THREE.Shape();
@@ -1436,7 +2090,7 @@ function createLeopard3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     }, maxAnisotropy, false, 0.0014).mesh
   );
 
-  // Spotted Pectoral Fin
+  // Spotted Pectoral Fin anchored cleanly at surfaceZ
   const pShape = new THREE.Shape();
   pShape.moveTo(0.033, 0.01);
   pShape.bezierCurveTo(0.021, -0.028, -0.011, -0.066, -0.059, -0.088);
@@ -1453,24 +2107,36 @@ function createLeopard3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     drawBlob(fc, -0.025, -0.042, 0.015, 0.01, 0.7);
     drawBlob(fc, -0.049, -0.072, 0.011, 0.008, 0.7);
   }, maxAnisotropy, false, 0.0013);
+  const pecX = 0.235;
+  const pecY = -0.076;
+  const pecZ = surfaceZAt(evalTop, evalUnifiedBot, evalZ, pecX, pecY, 0.22, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.235, -0.08, 0.062);
+  pecLeft.position.set(pecX, pecY, pecZ);
+  pecLeft.rotation.x = -0.18;
+  pecObj.mesh.rotation.y = 0.28;
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.235, -0.08, -0.062);
-  pecRight.add(pecObj.mesh.clone());
+  pecRight.position.set(pecX, pecY, -pecZ);
+  pecRight.rotation.x = 0.18;
+  const pecMeshR = pecObj.mesh.clone();
+  pecMeshR.rotation.y = -0.28;
+  pecRight.add(pecMeshR);
   bodyGroup.add(pecLeft, pecRight);
 
   const pelvicFin = new THREE.Group();
   bodyGroup.add(pelvicFin);
 
+  const leoEy = -(-0.014 + oy2);
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
     ex: 0.362,
-    ey: -(-0.014 + oy2),
-    ez: surfaceZAt(evalTop, evalUnifiedBot, evalZ, 0.362, -(-0.014 + oy2)),
-    er: 0.028,
+    ey: leoEy,
+    ez: surfaceZAt(evalTop, evalUnifiedBot, evalZ, 0.362, leoEy),
+    er: 0.026,
+    yawRot: 0.34,
     irisColor: pal.iris || "#7a3b12",
     rimColor: OL,
+    lidColor: mixHex(B, D, 0.52),
+    lidTilt: -0.22,
   });
 
   const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.01, hy + 0.01, FIN, 0.048);
@@ -1542,7 +2208,7 @@ function createSailfish3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     sampleBezierChain(
       [
         [[xTail, -0.018], [-0.075, -0.094], [0.085, -0.106], [0.195, -0.082]],
-        [[0.195, -0.082], [0.282, -0.054], [0.33, -0.032], [0.344, -0.016]],
+        [[0.195, -0.082], [0.282, -0.056], [0.33, -0.036], [0.344, -0.025]],
       ],
       24
     )
@@ -1694,9 +2360,10 @@ function createSailfish3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     new THREE.MeshPhysicalMaterial({
       color: mixHex(DK, "#3c68b8", 0.35),
       emissive: DK,
-      emissiveIntensity: 0.22,
-      roughness: 0.22,
-      clearcoat: 0.65,
+      emissiveIntensity: 0.14,
+      roughness: 0.56,
+      clearcoat: 0.06,
+      envMapIntensity: 0.08,
     })
   );
   const billMesh = new THREE.Mesh(billGeo, billMat);
@@ -1899,11 +2566,12 @@ function createSailfish3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     fc.bezierCurveTo(-0.058, 0.016, -0.128, 0, -0.182, -0.022);
     fc.stroke();
   }, maxAnisotropy, false, 0.0013);
+  const pecZ = surfaceZAt(evalTop, evalUnifiedBot, evalZ, 0.14, -0.034, 0.22, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.14, -0.034, 0.082);
+  pecLeft.position.set(0.14, -0.034, pecZ);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.14, -0.034, -0.082);
+  pecRight.position.set(0.14, -0.034, -pecZ);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -1973,7 +2641,7 @@ function createStingray3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       [
         [[-0.18, 0.018], [-0.08, 0.075], [0.1, 0.095], [0.225, 0.078]],
         [[0.225, 0.078], [0.275, 0.076], [0.302, 0.056], [0.342, 0.046]],
-        [[0.342, 0.046], [0.382, 0.038], [0.412, 0.025], [xNose, 0.006]],
+        [[0.342, 0.046], [0.382, 0.038], [0.412, 0.026], [xNose, 0.009]],
       ],
       24
     )
@@ -1982,7 +2650,7 @@ function createStingray3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     sampleBezierChain(
       [
         [[-0.18, -0.015], [-0.065, -0.062], [0.065, -0.09], [0.185, -0.078]],
-        [[0.185, -0.078], [0.295, -0.072], [0.37, -0.036], [xNose, -0.006]],
+        [[0.185, -0.078], [0.295, -0.072], [0.37, -0.036], [xNose, -0.009]],
       ],
       24
     )
@@ -2287,7 +2955,7 @@ function createTuna3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       [
         [[-0.305, 0.012], [-0.22, 0.04], [-0.135, 0.095], [0.02, 0.114]],
         [[0.02, 0.114], [0.165, 0.125], [0.305, 0.088], [0.398, 0.018]],
-        [[0.398, 0.018], [0.432, -0.004], [0.436, -0.012], [0.436, -0.016]],
+        [[0.398, 0.018], [0.422, 0.002], [0.432, -0.003], [0.436, -0.005]],
       ],
       24
     )
@@ -2297,7 +2965,7 @@ function createTuna3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       [
         [[-0.305, -0.02], [-0.285, -0.024], [-0.245, -0.042], [-0.18, -0.064]],
         [[-0.18, -0.064], [-0.05, -0.105], [0.11, -0.115], [0.235, -0.08]],
-        [[0.235, -0.08], [0.328, -0.068], [0.428, -0.036], [0.436, -0.016]],
+        [[0.235, -0.08], [0.328, -0.068], [0.405, -0.05], [0.436, -0.039]],
       ],
       24
     )
@@ -2305,7 +2973,7 @@ function createTuna3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const evalZ = (x: number) => {
     const t = clamp((x - xTail) / (xSnout - xTail), 0, 1);
     const base = 0.018 + 0.106 * Math.sin(Math.pow(t, 0.74) * Math.PI);
-    return x > 0.26 ? base * clamp(1 - (x - 0.26) / 0.2, 0.3, 1) : base;
+    return x > 0.26 ? base * clamp(1 - (x - 0.26) / 0.2, 0.38, 1) : base;
   };
 
   const { mapUV, beginCanvas2D } = createWorldMapper(-0.34, 0.46, -0.14, 0.14, 512);
@@ -2409,7 +3077,7 @@ function createTuna3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       xEnd: 0.426,
       uSteps: 18,
       vSteps: 18,
-      evalTopY: () => hy - 0.002,
+      evalTopY: () => hy + 0.002,
       evalBotY: evalBot,
       evalHalfZ: (x) => evalZ(x) * 0.9,
       mapUV,
@@ -2552,11 +3220,12 @@ function createTuna3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     ]);
     fc.fillRect(-0.2, -0.12, 0.24, 0.16);
   }, maxAnisotropy, false, 0.0013);
+  const pecZ = surfaceZAt(evalTop, evalUnifiedBot, evalZ, 0.185, -0.028, 0.22, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.185, -0.028, 0.088);
+  pecLeft.position.set(0.185, -0.028, pecZ);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.185, -0.028, -0.088);
+  pecRight.position.set(0.185, -0.028, -pecZ);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -2636,7 +3305,7 @@ function createHammerhead3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       [
         [[-0.282, -0.036], [-0.242, -0.05], [-0.185, -0.065], [0.068, -0.106]],
         [[0.068, -0.106], [0.145, -0.1], [0.185, -0.096], [0.278, -0.09]],
-        [[0.278, -0.09], [0.322, -0.076], [0.345, -0.052], [0.326, -0.056]],
+        [[0.278, -0.09], [0.302, -0.085], [0.318, -0.081], [0.326, -0.078]],
       ],
       24
     )
@@ -2867,11 +3536,14 @@ function createHammerhead3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     ]);
     fc.fillRect(-0.18, -0.16, 0.22, 0.19);
   }, maxAnisotropy, false, 0.0013);
+  const pecZ = surfaceZAt(evalTop, evalUnifiedBot, evalZ, 0.112, -0.056, 0.22, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.112, -0.056, 0.072);
+  pecLeft.position.set(0.112, -0.056, pecZ);
+  pecLeft.rotation.x = -0.2;
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.112, -0.056, -0.072);
+  pecRight.position.set(0.112, -0.056, -pecZ);
+  pecRight.rotation.x = 0.2;
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -2947,7 +3619,7 @@ function createLumba3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
         [[-0.332, -0.008], [-0.242, 0.025], [-0.14, 0.088], [-0.005, 0.114]],
         [[-0.005, 0.114], [0.135, 0.132], [0.255, 0.11], [0.322, 0.052]],
         [[0.322, 0.052], [0.352, 0.024], [0.362, -0.002], [0.398, -0.006]],
-        [[0.398, -0.006], [0.438, -0.01], [0.446, -0.02], [xSnout, -0.026]],
+        [[0.398, -0.006], [0.426, -0.008], [0.442, -0.011], [xSnout, -0.013]],
       ],
       24
     )
@@ -2958,7 +3630,7 @@ function createLumba3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
         [[-0.332, -0.032], [-0.298, -0.038], [-0.255, -0.054], [-0.185, -0.072]],
         [[-0.185, -0.072], [-0.055, -0.105], [0.1, -0.122], [0.235, -0.102]],
         [[0.235, -0.102], [0.295, -0.092], [0.342, -0.078], [0.392, -0.062]],
-        [[0.392, -0.062], [0.422, -0.052], [0.442, -0.044], [0.436, -0.036]],
+        [[0.392, -0.062], [0.412, -0.056], [0.426, -0.051], [0.436, -0.047]],
       ],
       24
     )
@@ -2966,7 +3638,7 @@ function createLumba3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const evalZ = (x: number) => {
     const t = clamp((x - xTail) / (xSnout - xTail), 0, 1);
     const base = 0.016 + 0.098 * Math.sin(Math.pow(t, 0.74) * Math.PI);
-    return x > 0.3 ? base * clamp(1 - (x - 0.3) / 0.18, 0.24, 1) : base;
+    return x > 0.3 ? base * clamp(1 - (x - 0.3) / 0.18, 0.36, 1) : base;
   };
 
   const { mapUV, beginCanvas2D } = createWorldMapper(-0.37, 0.48, -0.15, 0.15, 512);
@@ -3005,7 +3677,7 @@ function createLumba3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const evalTop = (x: number) => interpCurveY(topPts, x);
   const evalBot = (x: number) => interpCurveY(botPts, x);
-  const evalUpperPalate = () => -0.028;
+  const evalUpperPalate = () => -0.029;
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx, 0.032, 0.014);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
 
@@ -3050,7 +3722,7 @@ function createLumba3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       xEnd: 0.436,
       uSteps: 18,
       vSteps: 18,
-      evalTopY: () => -0.032,
+      evalTopY: () => -0.031,
       evalBotY: evalBot,
       evalHalfZ: (x) => evalZ(x) * 0.88,
       mapUV,
@@ -3122,11 +3794,14 @@ function createLumba3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     ]);
     fc.fillRect(-0.17, -0.16, 0.21, 0.19);
   }, maxAnisotropy, false, 0.0013);
+  const pecZ = surfaceZAt(evalTop, evalUnifiedBot, evalZ, 0.122, -0.056, 0.22, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.122, -0.056, 0.082);
+  pecLeft.position.set(0.122, -0.056, pecZ);
+  pecLeft.rotation.x = -0.22;
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.122, -0.056, -0.082);
+  pecRight.position.set(0.122, -0.056, -pecZ);
+  pecRight.rotation.x = 0.22;
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 

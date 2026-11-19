@@ -44,14 +44,27 @@ function tintCv(src: HTMLCanvasElement, col: number, alpha: number): HTMLCanvasE
 }
 
 function blurCanvas2d(src: HTMLCanvasElement, radiusPx: number): HTMLCanvasElement {
-  // Full-resolution 2-pass premultiplied separable tent blur (zero downscale pixelation, seamless horizontal wrap)
   const w = src.width;
   const h = src.height;
-  const r = Math.max(1, Math.round(radiusPx * 1.45));
   const cv = document.createElement("canvas");
   cv.width = w;
   cv.height = h;
   const c = cv.getContext("2d")!;
+  if (typeof c.filter === "string") {
+    const pad = Math.min(w >> 1, Math.max(8, Math.ceil(radiusPx * 4)));
+    const tmp = document.createElement("canvas");
+    tmp.width = w + pad * 2;
+    tmp.height = h;
+    const tc = tmp.getContext("2d")!;
+    tc.drawImage(src, w - pad, 0, pad, h, 0, 0, pad, h);
+    tc.drawImage(src, 0, 0, w, h, pad, 0, w, h);
+    tc.drawImage(src, 0, 0, pad, h, pad + w, 0, pad, h);
+    c.filter = `blur(${radiusPx.toFixed(2)}px)`;
+    c.drawImage(tmp, -pad, 0);
+    c.filter = "none";
+    return cv;
+  }
+  const r = Math.max(1, Math.round(radiusPx * 1.45));
   c.drawImage(src, 0, 0);
   const img = c.getImageData(0, 0, w, h);
   const d = img.data;
@@ -1709,6 +1722,21 @@ export function attach2dBiota(out: BioSet, tint?: [number, number]) {
   }
 }
 
+export function copy2dBiotaTint(target: BioSet, src: BioSet, tint: [number, number]) {
+  for (const key of Object.keys(target)) {
+    const list = target[key];
+    const srcList = src[key];
+    if (!list || !srcList) continue;
+    for (let i = 0; i < list.length && i < srcList.length; i++) {
+      const b = list[i];
+      const sb = srcList[i];
+      if (sb.f2d?.length) b.f2d = sb.f2d.map((cv) => tintCv(cv, tint[0], tint[1]));
+      if (sb.shy2d?.length) b.shy2d = sb.shy2d.map((cv) => tintCv(cv, tint[0], tint[1]));
+      if (sb.anim) b.anim = sb.anim;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 2D FOREGROUND FRAMING BOULDERS + CORALS
 // ---------------------------------------------------------------------------
@@ -2948,9 +2976,15 @@ export function makeFar3_2d(st: RockPal2d): HTMLCanvasElement {
   const r = rng(509);
   for (let i = 0; i < 40; i++) {
     ctx.fillStyle = abgrCss(st.ramp[i % 2 ? 4 : 1], 0.18);
-    ctx.beginPath();
-    ctx.ellipse(r() * w, 240 + r() * 140, 45 + r() * 65, 14 + r() * 18, 0, 0, TAU);
-    ctx.fill();
+    const ex = r() * w;
+    const ey = 240 + r() * 140;
+    const erx = 45 + r() * 65;
+    const ery = 14 + r() * 18;
+    for (const dx of [-w, 0, w]) {
+      ctx.beginPath();
+      ctx.ellipse(ex + dx, ey, erx, ery, 0, 0, TAU);
+      ctx.fill();
+    }
   }
   ctx.restore();
 

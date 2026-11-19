@@ -357,7 +357,10 @@ export function makeSolidRoughnessMap(valHex = "#565656"): THREE.CanvasTexture {
   cv.width = 64;
   cv.height = 64;
   const c = cv.getContext("2d")!;
-  c.fillStyle = valHex;
+  // Remap legacy dark roughness hexes (#40-#68) into soft satin [208..242] so fish don't turn into glossy mirror plastic
+  const [r0] = hexRgb(valHex.startsWith("#") ? valHex : "#565656");
+  const norm = Math.round(208 + (clamp(r0, 48, 220) - 48) * (34 / 172));
+  c.fillStyle = `rgb(${norm},${norm},${norm})`;
   c.fillRect(0, 0, 64, 64);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.NoColorSpace;
@@ -420,22 +423,27 @@ export function createRigContext(outlineColor: string, roughHex = "#545454"): Sh
     if (useSpine) injectSpineShader(m, uniforms, offsetX, offsetY);
     return m;
   };
-  const makeFishMat = (map: THREE.Texture, extra?: Partial<THREE.MeshPhysicalMaterialParameters>) =>
-    track(
+  const makeFishMat = (map: THREE.Texture, extra?: Partial<THREE.MeshPhysicalMaterialParameters>) => {
+    const rough = extra?.roughness !== undefined ? Math.max(0.76, extra.roughness) : 0.88;
+    const coat = extra?.clearcoat !== undefined ? Math.min(0.05, extra.clearcoat) : 0.03;
+    const envInt = extra?.envMapIntensity !== undefined ? Math.min(0.1, extra.envMapIntensity) : 0.07;
+    const emInt = extra?.emissiveIntensity !== undefined ? Math.min(0.2, extra.emissiveIntensity) : 0.14;
+    return track(
       new THREE.MeshPhysicalMaterial({
         map,
         roughnessMap: roughnessTex,
-        roughness: 0.34,
-        metalness: 0.02,
-        clearcoat: 0.34,
-        clearcoatRoughness: 0.2,
-        envMapIntensity: 0.35,
         emissiveMap: map,
         emissive: new THREE.Color("#ffffff"),
-        emissiveIntensity: 0.26,
         ...extra,
+        roughness: rough,
+        metalness: 0,
+        clearcoat: coat,
+        clearcoatRoughness: 0.65,
+        envMapIntensity: envInt,
+        emissiveIntensity: emInt,
       })
     );
+  };
   return { disposables, track, uniforms, outlineColor, roughnessTex, makeOutlineMat, makeFishMat };
 }
 
@@ -474,18 +482,22 @@ export function createEyePair(
     new THREE.MeshPhysicalMaterial({
       color: "#ffffff",
       emissive: "#ffffff",
-      emissiveIntensity: 0.35,
-      roughness: 0.08,
-      clearcoat: 1.0,
+      emissiveIntensity: 0.18,
+      roughness: 0.38,
+      clearcoat: 0.15,
+      clearcoatRoughness: 0.45,
+      envMapIntensity: 0.08,
     })
   );
   const irisMat = track(
     new THREE.MeshPhysicalMaterial({
       color: opts.irisColor,
       emissive: opts.irisColor,
-      emissiveIntensity: 0.25,
-      roughness: 0.14,
-      clearcoat: 0.9,
+      emissiveIntensity: 0.14,
+      roughness: 0.34,
+      clearcoat: 0.18,
+      clearcoatRoughness: 0.4,
+      envMapIntensity: 0.08,
     })
   );
   const pupilMat = track(new THREE.MeshBasicMaterial({ color: "#070b18" }));
@@ -520,9 +532,10 @@ export function createEyePair(
       new THREE.MeshPhysicalMaterial({
         color: opts.lidColor,
         emissive: opts.lidColor,
-        emissiveIntensity: 0.22,
-        roughness: 0.34,
-        clearcoat: 0.3,
+        emissiveIntensity: 0.12,
+        roughness: 0.78,
+        clearcoat: 0.03,
+        envMapIntensity: 0.07,
       })
     );
   }
@@ -617,9 +630,11 @@ export function createOralParts(
     new THREE.MeshPhysicalMaterial({
       color: tongueCol,
       emissive: tongueCol,
-      emissiveIntensity: 0.25,
-      roughness: 0.28,
-      clearcoat: 0.55,
+      emissiveIntensity: 0.14,
+      roughness: 0.56,
+      clearcoat: 0.08,
+      clearcoatRoughness: 0.5,
+      envMapIntensity: 0.07,
     })
   );
   const tongueGeo = track(new THREE.SphereGeometry(1, 14, 10));

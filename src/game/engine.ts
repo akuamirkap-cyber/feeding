@@ -287,9 +287,10 @@ interface OrbItem {
 export const EAT_RATIO = 0.88;
 export const BOT_EAT_RATIO = 0.74; // rival duels (player vs bot / bot vs bot) require clear ~1.35x radius (~1.83x mass) advantage!
 const SCHOOL_COUNT = 13;
-const LOAD_BUDGET = 22; // ms of world generation per slice for fast startup while keeping UI responsive
+const LOAD_BUDGET = 12; // ms of world generation per slice so menu UI stays responsive at 60 FPS
 const SPRITE_BUDGET = 2;
 const MAX_PIXELS = 960_000; // crisp HiDPI cap (~1280x750) for locked 60+ FPS fill-rate
+const MENU_MAX_PIXELS = 320_000; // lighter background ocean resolution while main menu overlays the canvas
 const Q_SCALE = [1, 0.85, 0.72, 0.58]; // smooth adaptive resolution steps
 const GRID_CELL = 140;
 const GRID_COLS = Math.ceil(WORLD_W / GRID_CELL) + 1;
@@ -418,17 +419,21 @@ export class Game {
   private qTrying = false;
   private qLocked = false;
   private qHold = 3;
+  menuActive = true;
+  menuPaused = false;
+  private lastLoadDrawPct = -1;
+  private loadTimer: number | null = null;
   speedScale = 1.0;
   coinHudPos = { x: 900, y: 26 };
   private prevZone = -1;
   private prevPlayerY = 999;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, init?: { pixelMode?: boolean; reef3D?: boolean }) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
-    this.ocean = new Ocean();
-    this.ocean.pixelMode = this.pixelMode;
-    this.ocean.reef3D = this.reef3D;
+    if (init?.pixelMode !== undefined) this.pixelMode = init.pixelMode;
+    if (init?.reef3D !== undefined) this.reef3D = init.reef3D;
+    this.ocean = new Ocean({ pixelMode: this.pixelMode, reef3D: this.reef3D });
     // make sure the pixel font used by the depth-level HUD is loaded even if no DOM element uses it yet
     try {
       const fonts = (document as unknown as { fonts?: { load: (f: string) => unknown; addEventListener?: (e: string, cb: () => void) => void } }).fonts;
@@ -456,6 +461,7 @@ export class Game {
     // NOTE: the ocean is NOT generated here. loadStep() builds it a few milliseconds per frame (with a
     // progress bar) and then populates it, so opening the page never locks up the browser.
     this.resize(true);
+    this.drawLoading();
     this.last = performance.now();
     this.loop = this.loop.bind(this);
     this.raf = requestAnimationFrame(this.loop);
@@ -463,11 +469,22 @@ export class Game {
   }
 
   /**
-   * Schedules the next loading slice as its own task (MessageChannel = no 4 ms timer clamp). Between two
-   * slices the browser is free to handle input and paint, so the menu stays fully responsive.
+   * Schedules the next loading slice. When the interactive menu is open, yields briefly between chunks
+   * so carousel scrolling & animations keep a locked 60 FPS while the ocean builds in the background.
    */
   private pumpLoad() {
     if (this.ready || this.disposed) return;
+    if (this.menuActive) {
+      if (this.loadTimer !== null) clearTimeout(this.loadTimer);
+      const sliceBudget = isSoftwareWebGL() ? 16 : 24;
+      this.loadTimer = window.setTimeout(() => {
+        this.loadTimer = null;
+        if (this.ready || this.disposed) return;
+        this.loadStep(sliceBudget);
+        this.pumpLoad();
+      }, 0);
+      return;
+    }
     if (typeof MessageChannel !== "undefined") {
       if (!this.mc) {
         this.mc = new MessageChannel();
@@ -499,26 +516,28 @@ export class Game {
     }
     const pct = this.ready ? 1 : this.ocean.progress * 0.95 + (this.warm ? (this.warmI / Math.max(1, this.warm.length)) * 0.05 : 0);
     this.loadPct = pct;
-    const ip = Math.floor(pct * 20);
+    const ip = Math.floor(pct * 50);
     if (ip !== this.loadEmit || this.ready) {
       this.loadEmit = ip;
       this.onLoad?.(pct, this.ready);
     }
   }
 
-  /** one sprite per fish type & size tier, so the very first frame never has to draw them all at once */
+  /** minimal essential sprites needed on frame 0; remaining fish rasterise seamlessly in background idle frames */
   private warmList(): (() => void)[] {
     const jobs: (() => void)[] = [];
     const add = (sp: Species, key: string, r: number) => jobs.push(() => void fishSprite(sp, fishLen(r), 0, 0, key, this.pixelMode, "normal", true));
-    for (const sp of SPECIES) {
-      add(sp, sp.id, sp.minR);
-      add(sp, sp.id, sp.maxR);
-    }
     for (const sp of FRY) add(sp, sp.id, sp.minR);
-    for (const sk of SKINS) {
-      const sp = skinToSpecies(sk);
-      add(sp, "bot-" + sk.id, 8);
-      add(sp, "bot-" + sk.id, 14);
+    for (let i = 0; i < Math.min(6, SPECIES.length); i++) {
+      const sp = SPECIES[i];
+      add(sp, sp.id, sp.minR);
+    }
+    const starterSkin = SKINS.find((s) => s.id === this.playerSkinId) || SKINS[0];
+    if (starterSkin) {
+      add(skinToSpecies(starterSkin), "bot-" + starterSkin.id, 8);
+    }
+    if (SKINS[0] && SKINS[0].id !== starterSkin?.id) {
+      add(skinToSpecies(SKINS[0]), "bot-" + SKINS[0].id, 8);
     }
     return jobs;
   }
@@ -533,8 +552,16 @@ export class Game {
       // skewed toward small fry so a 50-player ocean is still fair to a fresh spawn
       this.spawnBot(names[i % names.length], botSkin, 56 + Math.pow(Math.random(), 2.4) * 640);
     }
-    // background queue: every swim frame of every fish type, rasterised one per idle frame so that
-    // meeting a new kind of fish during play never costs a hitch
+    // background queue: base poses & swim frames of every fish type, rasterised smoothly on idle frames
+    for (const sp of SPECIES) {
+      this.bg.push(() => void fishSprite(sp, fishLen(sp.minR), 0, 0, sp.id, this.pixelMode, "normal", true));
+      this.bg.push(() => void fishSprite(sp, fishLen(sp.maxR), 0, 0, sp.id, this.pixelMode, "normal", true));
+    }
+    for (const sk of SKINS) {
+      const sp = skinToSpecies(sk);
+      this.bg.push(() => void fishSprite(sp, fishLen(8), 0, 0, "bot-" + sk.id, this.pixelMode, "normal", true));
+      this.bg.push(() => void fishSprite(sp, fishLen(14), 0, 0, "bot-" + sk.id, this.pixelMode, "normal", true));
+    }
     const q = (sp: Species, key: string, r: number) => {
       for (let tf = 0; tf < 8; tf++) this.bg.push(() => void fishSprite(sp, fishLen(r), 0, (tf + 0.5) * (Math.PI / 4), key, this.pixelMode, "normal", true));
     };
@@ -631,6 +658,7 @@ export class Game {
   setPixelMode(pm: boolean) {
     this.pixelMode = pm;
     this.ocean.pixelMode = pm;
+    if (this.ready) this.ocean.ensureMode(this.pixelMode, this.reef3D);
     const use3D = this.mode3D && !pm;
     this.playerMode3D = use3D;
     for (const f of this.fish) {
@@ -642,6 +670,7 @@ export class Game {
   setReef3D(v: boolean) {
     this.reef3D = v;
     this.ocean.reef3D = v;
+    if (this.ready) this.ocean.ensureMode(this.pixelMode, this.reef3D);
   }
 
   setMode3D(on: boolean) {
@@ -653,8 +682,31 @@ export class Game {
     }
   }
 
+  setMenuMode(on: boolean) {
+    if (this.menuActive === on) return;
+    this.menuActive = on;
+    if (!on) {
+      this.menuPaused = false;
+      this.last = performance.now();
+    } else {
+      sfx.setSuck(false);
+    }
+    this.resize(true);
+    if (!this.ready && !on) {
+      this.pumpLoad();
+    }
+  }
+
+  setMenuPaused(paused: boolean) {
+    this.menuPaused = paused;
+  }
+
   destroy() {
     this.disposed = true;
+    if (this.loadTimer !== null) {
+      clearTimeout(this.loadTimer);
+      this.loadTimer = null;
+    }
     this.mc?.port1.close();
     this.mc = null;
     cancelAnimationFrame(this.raf);
@@ -904,10 +956,13 @@ export class Game {
     }
   }
 
-  updateSchools(dt: number, threats: Fish[]) {
+  updateSchools(dt: number, threats: Fish[], attract = false) {
+    const nearX = this.vw * 0.85 + 160;
+    const nearY = this.vh * 0.85 + 160;
     for (const s of this.schools) {
       s.members = s.members.filter((m) => !m.dead);
       if (!s.members.length) continue;
+      if (attract && (Math.abs(s.x - this.cam.x) > nearX || Math.abs(s.y - this.cam.y) > nearY)) continue;
       // anything big enough to eat them makes the whole school bolt and ball up
       let fx = 0,
         fy = 0,
@@ -1210,7 +1265,7 @@ export class Game {
     }
     if (f.boosting && !wasBoost) {
       f.sqv -= 6;
-      const onScreen = Math.abs(f.x - this.cam.x) < this.vw / 2 + 20 && Math.abs(f.y - this.cam.y) < this.vh / 2 + 20;
+      const onScreen = !this.menuActive && Math.abs(f.x - this.cam.x) < this.vw / 2 + 20 && Math.abs(f.y - this.cam.y) < this.vh / 2 + 20;
       if (onScreen) {
         sfx.whoosh(f === this.player);
         const bx = f.x - f.face * f.r;
@@ -1225,14 +1280,35 @@ export class Game {
   loop(now: number) {
     const ts = Number.isFinite(now) ? now : performance.now();
     const raw = ts - this.last;
-    let dt = Number.isFinite(raw) ? raw / 1000 : 1 / 60;
-    this.last = ts;
     if (!this.ready) {
-      // the world is generated by pumpLoad() between frames; here we only paint the progress
-      this.drawLoading();
+      this.last = ts;
+      if (!this.menuActive || Math.abs(this.loadPct - this.lastLoadDrawPct) >= 0.06 || this.lastLoadDrawPct < 0) {
+        this.lastLoadDrawPct = this.loadPct;
+        this.drawLoading();
+      }
       this.raf = requestAnimationFrame(this.loop);
       return;
     }
+    if (this.menuActive) {
+      if (this.menuPaused || document.hidden) {
+        this.last = ts;
+        this.raf = requestAnimationFrame(this.loop);
+        return;
+      }
+      // Smooth ~28 FPS live ocean attract mode behind the wooden menu so fish & reefs stay alive without starving 60 FPS UI
+      if (raw < 36) {
+        this.raf = requestAnimationFrame(this.loop);
+        return;
+      }
+      const dtMenu = clamp(raw / 1000, 0.008, 0.05);
+      this.last = ts;
+      this.update(dtMenu);
+      this.render();
+      this.raf = requestAnimationFrame(this.loop);
+      return;
+    }
+    let dt = Number.isFinite(raw) ? raw / 1000 : 1 / 60;
+    this.last = ts;
     this.trackPerf(raw);
     if (dt < 0) dt = 0;
     else if (dt > 0.05) dt = 0.05;
@@ -1246,7 +1322,7 @@ export class Game {
       this.update(dt);
     }
     this.render();
-    // idle-time sprite warming: one per frame, and only when this frame did not have to draw a new one
+    // idle-time sprite warming during gameplay
     if (this.bg.length && spriteBudgetLeft() > 0) this.bg.pop()!();
     this.raf = requestAnimationFrame(this.loop);
   }
@@ -1275,7 +1351,8 @@ export class Game {
       this.vw = cw;
       this.vh = ch;
     } else {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_PIXELS / (W * H))) * Q_SCALE[this.quality];
+      const capPx = this.menuActive ? MENU_MAX_PIXELS : MAX_PIXELS;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(capPx / (W * H))) * Q_SCALE[this.quality];
       const cw = Math.round(W * dpr);
       const ch = Math.round(H * dpr);
       if (this.canvas.width !== cw || this.canvas.height !== ch) {
@@ -1472,16 +1549,24 @@ export class Game {
       sfx.setSuck(false);
     }
 
-    this.rebuildGrid();
+    const attract = this.menuActive;
+    const nearX = this.vw * 0.8 + 140;
+    const nearY = this.vh * 0.8 + 140;
+
+    this.rebuildGrid(attract, nearX, nearY);
     const predators = this.predators;
     predators.length = 0;
     for (let i = 0; i < this.fish.length; i++) {
       const f = this.fish[i];
-      if (!f.dead && !f.eatenBy && (f.kind !== "npc" || f.sp.predator)) predators.push(f);
+      if (!f.dead && !f.eatenBy && (f.kind !== "npc" || f.sp.predator)) {
+        if (attract && (Math.abs(f.x - this.cam.x) > nearX || Math.abs(f.y - this.cam.y) > nearY)) continue;
+        predators.push(f);
+      }
     }
-    this.updateSchools(dt, predators);
+    this.updateSchools(dt, predators, attract);
     for (const f of this.fish) {
       if (f.dead || f.eatenBy || f.kind === "player") continue;
+      if (attract && (Math.abs(f.x - this.cam.x) > nearX || Math.abs(f.y - this.cam.y) > nearY)) continue;
       f.ai.timer -= dt;
       if (f.kind === "bot") this.botAI(f, dt);
       else if (f.fry) this.fryAI(f, dt);
@@ -1489,11 +1574,15 @@ export class Game {
     }
 
     for (const f of this.fish) {
-      if (f.sucking && !f.dead && !f.eatenBy) this.doSuck(f, dt);
+      if (f.sucking && !f.dead && !f.eatenBy) {
+        if (attract && (Math.abs(f.x - this.cam.x) > nearX || Math.abs(f.y - this.cam.y) > nearY)) continue;
+        this.doSuck(f, dt);
+      }
     }
 
     for (const f of this.fish) {
       if (f.dead) continue;
+      if (attract && !f.eatenBy && (Math.abs(f.x - this.cam.x) > nearX || Math.abs(f.y - this.cam.y) > nearY)) continue;
       if (f.eatenBy) {
         f.eatT += dt / (f.fry ? 0.085 : 0.14);
         if (f.eatT >= 1) this.finishEat(f.eatenBy, f);
@@ -1692,7 +1781,7 @@ export class Game {
           });
         }
       }
-      if (f.kind === "npc" && Math.random() < dt * 0.15) this.particles.push(this.bubble(f.mouthX(), f.mouthY(), 1));
+      if (f.kind === "npc" && Math.random() < dt * (attract ? 0.04 : 0.15)) this.particles.push(this.bubble(f.mouthX(), f.mouthY(), 1));
       if (f !== p) {
         f.hiddenCave = this.getCaveAt(f.x, f.y, f.r, f.inCaveId);
         if (f.hiddenCave) {
@@ -1706,7 +1795,7 @@ export class Game {
       }
     }
 
-    this.checkEating();
+    this.checkEating(attract, nearX, nearY);
 
     {
       let w = 0;
@@ -1729,8 +1818,9 @@ export class Game {
     for (const q of ready) this.spawnBot(q.name, q.skin, 58 + Math.random() * 140);
 
     // Spawn coins both from surface and inside glowing deep crevices!
-    this.coinTimer -= dt;
-    if (this.coinTimer <= 0) {
+    if (!attract) {
+      this.coinTimer -= dt;
+      if (this.coinTimer <= 0) {
       this.coinTimer = 1.1 + Math.random() * 1.3;
       const x = this.cam.x + (Math.random() - 0.5) * this.vw * 1.4;
       this.worldCoins.push({
@@ -1792,7 +1882,10 @@ export class Game {
         }
       }
     }
-    this.worldCoins = this.worldCoins.filter((c) => c.t < 24 && c.y < WORLD_H + 10);
+      this.worldCoins = this.worldCoins.filter((c) => c.t < 24 && c.y < WORLD_H + 10);
+    } else {
+      this.coinTimer = 0;
+    }
 
     // Active power-up timers + Pearls / Power-Up Orbs + Golden Sardine Frenzy
     if (this.shieldT > 0) this.shieldT = Math.max(0, this.shieldT - dt);
@@ -1947,7 +2040,7 @@ export class Game {
     }
     this.flyCoins = this.flyCoins.filter((c) => c.t < 999);
 
-    if (Math.random() < dt * 11) {
+    if (Math.random() < dt * (attract ? 4.5 : 11)) {
       const v = this.ocean.vents[Math.floor(Math.random() * this.ocean.vents.length)];
       if (v && Math.abs(v.x - this.cam.x) < this.vw) {
         const count = 1 + (Math.random() < 0.45 ? 1 : 0);
@@ -2047,8 +2140,9 @@ export class Game {
       const focus = p && !p.dead ? p.eatenBy || p : this.deathTimer >= 0 ? null : this.spectate;
       if (focus) {
         const lead = focus.vx * 0.22;
-        this.cam.x += (focus.x + lead - this.cam.x) * Math.min(1, dt * 4.5);
-        this.cam.y += (focus.y + focus.vy * 0.14 - this.cam.y) * Math.min(1, dt * 4.5);
+        const targetCamY = attract ? clamp(focus.y + focus.vy * 0.14, 195, 420) : focus.y + focus.vy * 0.14;
+        this.cam.x += (focus.x + lead - this.cam.x) * Math.min(1, dt * (attract ? 2.6 : 4.5));
+        this.cam.y += (targetCamY - this.cam.y) * Math.min(1, dt * (attract ? 2.6 : 4.5));
       }
     }
     this.shake *= Math.exp(-9 * dt);
@@ -2119,33 +2213,35 @@ export class Game {
       }
       this.prevPlayerY = ambY;
     }
-    let ventProx = 0;
-    for (let i = 0; i < this.ocean.vents.length; i++) {
-      const v = this.ocean.vents[i];
-      const d = Math.hypot(v.x - this.cam.x, v.y - this.cam.y);
-      if (d < 260) {
-        const prox = 1 - d / 260;
-        if (prox > ventProx) ventProx = prox;
+    if (!attract) {
+      let ventProx = 0;
+      for (let i = 0; i < this.ocean.vents.length; i++) {
+        const v = this.ocean.vents[i];
+        const d = Math.hypot(v.x - this.cam.x, v.y - this.cam.y);
+        if (d < 260) {
+          const prox = 1 - d / 260;
+          if (prox > ventProx) ventProx = prox;
+        }
       }
-    }
-    sfx.updateAmbience({
-      inPlay,
-      playerY: ambY,
-      camTop: this.camTop,
-      sucking: Boolean(inPlay && p?.sucking),
-      boosting: Boolean(inPlay && p?.boosting),
-      ventProx,
-    });
+      sfx.updateAmbience({
+        inPlay,
+        playerY: ambY,
+        camTop: this.camTop,
+        sucking: Boolean(inPlay && p?.sucking),
+        boosting: Boolean(inPlay && p?.boosting),
+        ventProx,
+      });
 
-    this.hudTimer -= dt;
-    if (this.hudTimer <= 0) {
-      this.hudTimer = 0.12;
-      this.emitHud();
-    }
-    this.miniTimer -= dt;
-    if (this.miniTimer <= 0) {
-      this.miniTimer = 0.3;
-      this.drawMinimap();
+      this.hudTimer -= dt;
+      if (this.hudTimer <= 0) {
+        this.hudTimer = 0.12;
+        this.emitHud();
+      }
+      this.miniTimer -= dt;
+      if (this.miniTimer <= 0) {
+        this.miniTimer = 0.3;
+        this.drawMinimap();
+      }
     }
   }
 
@@ -2177,11 +2273,12 @@ export class Game {
     return o.r < e.r * ratio;
   }
 
-  rebuildGrid() {
+  rebuildGrid(attract = false, nearX = 0, nearY = 0) {
     const g = this.grid;
     for (let i = 0; i < g.length; i++) g[i].length = 0;
     for (const f of this.fish) {
       if (f.dead || f.eatenBy) continue;
+      if (attract && (Math.abs(f.x - this.cam.x) > nearX || Math.abs(f.y - this.cam.y) > nearY)) continue;
       const cx = Math.max(0, Math.min(GRID_COLS - 1, (f.x / GRID_CELL) | 0));
       const cy = Math.max(0, Math.min(GRID_ROWS - 1, (f.y / GRID_CELL) | 0));
       g[cy * GRID_COLS + cx].push(f);
@@ -2497,11 +2594,12 @@ export class Game {
     f.vy += ((dy / d) * ms - f.vy) * steer;
   }
 
-  checkEating() {
+  checkEating(attract = false, nearX = 0, nearY = 0) {
     const list = this.fish;
     for (const e of list) {
       if (e.dead || e.eatenBy) continue;
       if (e.kind === "npc" && !e.sp.predator) continue;
+      if (attract && (Math.abs(e.x - this.cam.x) > nearX || Math.abs(e.y - this.cam.y) > nearY)) continue;
       const busy = e.chompT > (e.munch ? 0.26 : 0.1);
       const mx = e.mouthX(),
         my = e.mouthY();
@@ -2774,13 +2872,13 @@ export class Game {
         if (!tiny) sfx.combo(e.combo);
       }
       if (o.kind === "bot") this.onEvent?.({ type: "feed", text: `${e.name} memakan ${o.name}!` });
-    } else if (onScreen && !tiny && Math.abs(mx - this.cam.x) < this.vw / 2) {
+    } else if (!this.menuActive && onScreen && !tiny && Math.abs(mx - this.cam.x) < this.vw / 2) {
       sfx.gulp(o.r / 6, false);
     }
 
     if (o.kind === "bot") {
       this.respawnQueue.push({ t: 1.5 + Math.random() * 2.5, name: o.name, skin: o.skinRef || SKINS[0] });
-      if (e.kind === "bot") this.onEvent?.({ type: "feed", text: `${e.name} memakan ${o.name}!` });
+      if (!this.menuActive && e.kind === "bot") this.onEvent?.({ type: "feed", text: `${e.name} memakan ${o.name}!` });
     }
     if (o === this.player) {
       this.killerName = e.name || e.sp.name;
@@ -3170,8 +3268,8 @@ export class Game {
   render() {
     if (!this.ocean.ready) return;
     beginSpriteFrame(SPRITE_BUDGET);
-    this.live3DBudget = isSoftwareWebGL() ? 4 : 16;
-    fish3d.beginFrame(isSoftwareWebGL() ? 2 : 3);
+    this.live3DBudget = this.menuActive ? 0 : isSoftwareWebGL() ? 4 : 16;
+    if (!this.menuActive) fish3d.beginFrame(isSoftwareWebGL() ? 2 : 3);
     const ctx = this.ctx;
     const scale = this.pixelMode ? 1 : this.zoom * this.dpr;
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -3517,31 +3615,33 @@ export class Game {
     }
 
     // ---------- names, warnings & floating numbers: cached text sprites ----------
-    for (const f of sorted) {
-      if (f.eatenBy) continue;
-      const x = f.x - camLeft,
-        y = f.y - camTop - f.r * 1.15 - 8;
-      if (x < -60 || x > vw + 60 || y < -25 || y > vh + 40) continue;
-      if (f.kind !== "npc") {
-        if (f === p && this.caveVisAlpha > 0.01) continue;
-        const col =
-          f.kind === "player"
-            ? "#ffffff"
-            : p && !p.dead && this.canEat(f, p)
-              ? "#ff9494"
-              : p && !p.dead && this.canEat(p, f)
-                ? "#a8ffbe"
-                : "#e8f4ff";
-        const L = this.label(f.name, col, 9);
-        ctx.drawImage(L.cv, x - L.w / 2, y - L.h / 2, L.w, L.h);
-        if (f.id === this.leaderId) this.drawCrown(x, y - 9);
-      }
-      if (p && !p.dead && !p.hiddenCave && f !== p && this.canEat(f, p) && p.invuln <= 0) {
-        const d = Math.hypot(f.x - p.x, f.y - p.y);
-        const hunting = f.ai.target === p || (f.kind === "bot" && d < 160);
-        if (d < 200 && hunting && Math.floor(t * 6) % 2 === 0) {
-          const L = this.label("!", "#ff3b4e", 11);
-          ctx.drawImage(L.cv, x - L.w / 2, y - (f.kind === "npc" ? 0 : 11) - L.h / 2, L.w, L.h);
+    if (!this.menuActive) {
+      for (const f of sorted) {
+        if (f.eatenBy) continue;
+        const x = f.x - camLeft,
+          y = f.y - camTop - f.r * 1.15 - 8;
+        if (x < -60 || x > vw + 60 || y < -25 || y > vh + 40) continue;
+        if (f.kind !== "npc") {
+          if (f === p && this.caveVisAlpha > 0.01) continue;
+          const col =
+            f.kind === "player"
+              ? "#ffffff"
+              : p && !p.dead && this.canEat(f, p)
+                ? "#ff9494"
+                : p && !p.dead && this.canEat(p, f)
+                  ? "#a8ffbe"
+                  : "#e8f4ff";
+          const L = this.label(f.name, col, 9);
+          ctx.drawImage(L.cv, x - L.w / 2, y - L.h / 2, L.w, L.h);
+          if (f.id === this.leaderId) this.drawCrown(x, y - 9);
+        }
+        if (p && !p.dead && !p.hiddenCave && f !== p && this.canEat(f, p) && p.invuln <= 0) {
+          const d = Math.hypot(f.x - p.x, f.y - p.y);
+          const hunting = f.ai.target === p || (f.kind === "bot" && d < 160);
+          if (d < 200 && hunting && Math.floor(t * 6) % 2 === 0) {
+            const L = this.label("!", "#ff3b4e", 11);
+            ctx.drawImage(L.cv, x - L.w / 2, y - (f.kind === "npc" ? 0 : 11) - L.h / 2, L.w, L.h);
+          }
         }
       }
     }
@@ -3867,7 +3967,7 @@ export class Game {
     const py = S0 * (y - camTop + hover);
 
     let drew3D = false;
-    if (f.sp.is3D && !this.pixelMode) {
+    if (!this.menuActive && f.sp.is3D && !this.pixelMode) {
       const worldSpan = sprW * 1.14;
       ctx.setTransform(S0 * sc, 0, 0, S0 * sc, px, py);
       const pose = {

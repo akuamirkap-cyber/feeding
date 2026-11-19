@@ -12,10 +12,12 @@
 // ============================================================================
 import { Pix, C, P, rng, bayer, hash2, mixC } from "./pixel";
 import type { Rnd } from "./pixel";
-import { buildBiota, NF, genBranch, genTable, genFan, genKelp, genTubes, genWhip, genForegroundOutcrops } from "./reef";
+import { buildBiota, hydratePixelBiota, NF, genBranch, genTable, genFan, genKelp, genTubes, genWhip, genForegroundOutcrops } from "./reef";
 import type { Bio, BioSet } from "./reef";
 import {
+  attach2dBiota,
   attach2dBiotaGen,
+  copy2dBiotaTint,
   genForegroundOutcrops2d,
   paintPinnacle2d,
   paintCaveRim2d,
@@ -32,6 +34,7 @@ import {
 import type { CaveSpec2d } from "./reef2d";
 import {
   attach3dBiotaGen,
+  copy3dBiotaTint,
   disposeReef3DRenderer,
   genForegroundOutcrops3d,
   makeDeep2_3d,
@@ -150,16 +153,29 @@ function edt1d(f: Float32Array, n: number, out: Float32Array, v: Int32Array, z: 
   }
 }
 
-function computeBinaryEDT(mask: Uint8Array, targetVal: number, sw: number, sh: number): Float32Array {
+let _edtTmp = new Float32Array(0);
+let _edtF = new Float32Array(0);
+let _edtD1 = new Float32Array(0);
+let _edtV = new Int32Array(0);
+let _edtZ = new Float32Array(0);
+let _edtSolid = new Uint8Array(0);
+
+function computeBinaryEDT(mask: Uint8Array, targetVal: number, sw: number, sh: number, out: Float32Array) {
   const INF = 1e10;
   const n = sw * sh;
-  const tmp = new Float32Array(n);
-  const out = new Float32Array(n);
+  if (_edtTmp.length < n) _edtTmp = new Float32Array(n);
   const maxDim = Math.max(sw, sh);
-  const f = new Float32Array(maxDim);
-  const d1 = new Float32Array(maxDim);
-  const v = new Int32Array(maxDim);
-  const z = new Float32Array(maxDim + 1);
+  if (_edtF.length < maxDim) {
+    _edtF = new Float32Array(maxDim);
+    _edtD1 = new Float32Array(maxDim);
+    _edtV = new Int32Array(maxDim);
+    _edtZ = new Float32Array(maxDim + 1);
+  }
+  const tmp = _edtTmp;
+  const f = _edtF;
+  const d1 = _edtD1;
+  const v = _edtV;
+  const z = _edtZ;
 
   for (let y = 0; y < sh; y++) {
     const row = y * sw;
@@ -172,8 +188,10 @@ function computeBinaryEDT(mask: Uint8Array, targetVal: number, sw: number, sh: n
     edt1d(f, sh, d1, v, z);
     for (let y = 0; y < sh; y++) out[y * sw + x] = d1[y];
   }
-  return out;
 }
+
+let _edtDist0 = new Float32Array(0);
+let _edtDist1 = new Float32Array(0);
 
 function buildRockSDF(
   W: number,
@@ -182,11 +200,16 @@ function buildRockSDF(
   bot: Int16Array,
   caveBounds: { ceil: Int16Array; floor: Int16Array } | null,
   pad = 52,
-  step = 2
+  step = 3
 ): RockSDF {
   const sw = Math.ceil((W + pad * 2) / step) + 1;
   const sh = Math.ceil((H + pad * 2) / step) + 1;
-  const solid = new Uint8Array(sw * sh);
+  const n = sw * sh;
+  if (_edtSolid.length < n) _edtSolid = new Uint8Array(n);
+  if (_edtDist0.length < n) _edtDist0 = new Float32Array(n);
+  if (_edtDist1.length < n) _edtDist1 = new Float32Array(n);
+  const solid = _edtSolid;
+  solid.fill(0, 0, n);
   for (let gy = 0; gy < sh; gy++) {
     const ly = Math.round(gy * step - pad);
     if (ly < 0 || ly >= H) continue;
@@ -202,13 +225,13 @@ function buildRockSDF(
       }
     }
   }
-  const distToOut2 = computeBinaryEDT(solid, 0, sw, sh);
-  const distToIn2 = computeBinaryEDT(solid, 1, sw, sh);
-  const data = new Float32Array(sw * sh);
-  for (let i = 0; i < sw * sh; i++) {
+  computeBinaryEDT(solid, 0, sw, sh, _edtDist0);
+  computeBinaryEDT(solid, 1, sw, sh, _edtDist1);
+  const data = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
     data[i] = solid[i]
-      ? -(Math.max(0.5, Math.sqrt(distToOut2[i])) - 0.5) * step
-      : (Math.max(0.5, Math.sqrt(distToIn2[i])) - 0.5) * step;
+      ? -(Math.max(0.5, Math.sqrt(_edtDist0[i])) - 0.5) * step
+      : (Math.max(0.5, Math.sqrt(_edtDist1[i])) - 0.5) * step;
   }
   return { sw, sh, pad, step, data };
 }
@@ -251,14 +274,27 @@ const WATER: [number, number][] = (
 ).map(([y, h]) => [y, C(h)]);
 
 function blurCanvas(src: HTMLCanvasElement, radiusPx: number): HTMLCanvasElement {
-  // Full-resolution 2-pass premultiplied separable tent blur (zero downscale pixelation, seamless horizontal wrap)
   const w = src.width;
   const h = src.height;
-  const r = Math.max(1, Math.round(radiusPx * 1.45));
   const cv = document.createElement("canvas");
   cv.width = w;
   cv.height = h;
   const c = cv.getContext("2d")!;
+  if (typeof c.filter === "string") {
+    const pad = Math.min(w >> 1, Math.max(8, Math.ceil(radiusPx * 4)));
+    const tmp = document.createElement("canvas");
+    tmp.width = w + pad * 2;
+    tmp.height = h;
+    const tc = tmp.getContext("2d")!;
+    tc.drawImage(src, w - pad, 0, pad, h, 0, 0, pad, h);
+    tc.drawImage(src, 0, 0, w, h, pad, 0, w, h);
+    tc.drawImage(src, 0, 0, pad, h, pad + w, 0, pad, h);
+    c.filter = `blur(${radiusPx.toFixed(2)}px)`;
+    c.drawImage(tmp, -pad, 0);
+    c.filter = "none";
+    return cv;
+  }
+  const r = Math.max(1, Math.round(radiusPx * 1.45));
   c.drawImage(src, 0, 0);
   const img = c.getImageData(0, 0, w, h);
   const d = img.data;
@@ -650,8 +686,8 @@ export interface Formation {
   y: number;
   w: number;
   h: number;
-  cv: HTMLCanvasElement;
-  cv2d: HTMLCanvasElement;
+  cv?: HTMLCanvasElement;
+  cv2d?: HTMLCanvasElement;
   cv3d?: HTMLCanvasElement;
   caveRim?: HTMLCanvasElement;
   caveRim2d?: HTMLCanvasElement;
@@ -659,11 +695,27 @@ export interface Formation {
   cave?: ReefCave;
   sdfCave: RockSDF;
   sdfSolid: RockSDF;
-  col: HTMLCanvasElement;
-  col2d: HTMLCanvasElement;
+  col?: HTMLCanvasElement;
+  col2d?: HTMLCanvasElement;
   col3d?: HTMLCanvasElement;
+  colW: number;
+  colH: number;
+  colTop: number;
+  colHw0: number;
+  colRooted: boolean;
+  colSeed: number;
   colX: number;
   colY: number;
+  top: Int16Array;
+  bot: Int16Array;
+  zone: number;
+  seed: number;
+  rx: number;
+  ry: number;
+  cxl: number;
+  cyl: number;
+  caveSpec: CaveSpec2d;
+  shades: { x: number; y: number; f: number }[];
   insts: Inst[];
   colliders: RockCollider[];
 }
@@ -719,23 +771,31 @@ export class Ocean {
   bio!: BioSet;
   farBio!: BioSet;
   fgBio!: BioSet;
-  water!: HTMLCanvasElement;
-  water2d!: HTMLCanvasElement;
-  far1!: HTMLCanvasElement;
-  far1_2d!: HTMLCanvasElement;
-  far2!: HTMLCanvasElement;
-  far2_2d!: HTMLCanvasElement;
-  far3!: HTMLCanvasElement;
-  far3_2d!: HTMLCanvasElement;
+  water?: HTMLCanvasElement;
+  water2d?: HTMLCanvasElement;
+  far1?: HTMLCanvasElement;
+  far1_2d?: HTMLCanvasElement;
+  far2?: HTMLCanvasElement;
+  far2_2d?: HTMLCanvasElement;
+  far3?: HTMLCanvasElement;
+  far3_2d?: HTMLCanvasElement;
   far3_3d?: HTMLCanvasElement;
-  deep1!: HTMLCanvasElement;
-  deep1_2d!: HTMLCanvasElement;
-  deep2!: HTMLCanvasElement;
-  deep2_2d!: HTMLCanvasElement;
+  deep1?: HTMLCanvasElement;
+  deep1_2d?: HTMLCanvasElement;
+  deep2?: HTMLCanvasElement;
+  deep2_2d?: HTMLCanvasElement;
   deep2_3d?: HTMLCanvasElement;
-  floor!: HTMLCanvasElement;
-  floor2d!: HTMLCanvasElement;
+  floor?: HTMLCanvasElement;
+  floor2d?: HTMLCanvasElement;
   floor3d?: HTMLCanvasElement;
+
+  private builtPixel = false;
+  private built2d = false;
+  private built3d = false;
+  private floorTop?: Int16Array;
+  private floorShades: { x: number; y: number; f: number }[] = [];
+  private floorW = WORLD_W;
+  private floorH = WORLD_H + 75 - FLOOR_TOP;
 
   /** false until the whole world has been generated — nothing may be drawn before that */
   ready = false;
@@ -788,9 +848,10 @@ export class Ocean {
   private hudZone = -1;
   private hudT = -99;
 
-  constructor() {
-    // Generating ~8 megapixels of pixel art takes a second or more. Doing it here would freeze the page,
-    // so the constructor only prepares a generator; the engine runs it a few milliseconds per frame.
+  constructor(opts?: { pixelMode?: boolean; reef3D?: boolean }) {
+    if (opts?.pixelMode !== undefined) this.pixelMode = opts.pixelMode;
+    if (opts?.reef3D !== undefined) this.reef3D = opts.reef3D;
+    // Incremental generator runs in small time-sliced steps so opening the page never blocks the UI thread.
     this.gen = this.build();
   }
 
@@ -822,44 +883,82 @@ export class Ocean {
   }
 
   private *build(): Generator<number | void, void, void> {
-    // each stage reports smooth progress between two checkpoints (weights follow measured cost)
-    this.bio = yield* this.sub(buildBiota(), 0, 0.05, 46);
-    yield* this.sub(attach2dBiotaGen(this.bio), 0.05, 0.08, 44);
-    yield* this.sub(attach3dBiotaGen(this.bio), 0.08, 0.13, 44);
-    this.farBio = yield* this.sub(buildBiota([C("#1b6ab4"), 0.45], ["kelp", "fan", "whip", "staghorn", "table", "tubes", "grass", "brain", "pillar"]), 0.13, 0.14, 9);
-    yield* this.sub(attach2dBiotaGen(this.farBio, [C("#1b6ab4"), 0.45]), 0.14, 0.148, 9);
-    yield* this.sub(attach3dBiotaGen(this.farBio, [C("#1b6ab4"), 0.45]), 0.148, 0.156, 9);
-    this.fgBio = yield* this.sub(buildBiota([C("#030a1e"), 0.8], ["kelpBig", "fan2", "bamboo", "staghorn2", "whip2"]), 0.156, 0.164, 5);
-    yield* this.sub(attach2dBiotaGen(this.fgBio, [C("#030a1e"), 0.8]), 0.164, 0.172, 5);
-    yield* this.sub(attach3dBiotaGen(this.fgBio, [C("#030a1e"), 0.8]), 0.172, 0.18, 5);
-    this.fgDioramas = yield* this.sub(genForegroundOutcrops(), 0.18, 0.188, 4);
-    this.fgDioramas2d = genForegroundOutcrops2d();
-    this.fgDioramas3d = genForegroundOutcrops3d();
-    yield 0.195;
-    this.water = this.makeWater();
-    this.water2d = this.makeWater2d();
-    this.makeLightArt();
-    this.waves2d = makeWaves2d();
-    this.far1 = yield* this.sub(this.makeFar1(), 0.195, 0.21, 16);
-    this.far1_2d = makeFar1_2d();
-    yield 0.215;
-    this.far2 = yield* this.sub(this.makeFar2(), 0.215, 0.235, 24);
-    this.far2_2d = makeFar2_2d();
-    yield 0.24;
-    this.far3 = yield* this.sub(this.makeFar3(), 0.24, 0.285, 66);
-    this.far3_2d = makeFar3_2d(FAR_ROCK);
-    this.far3_3d = makeFar3_3d(FAR_ROCK);
-    yield 0.295;
-    this.deep1 = yield* this.sub(this.makeDeep1(), 0.295, 0.335, 38);
-    this.deep1_2d = makeDeep1_2d();
-    yield 0.34;
-    this.deep2 = yield* this.sub(this.makeDeep2(), 0.34, 0.44, 78);
-    this.deep2_2d = makeDeep2_2d(DEEP_ROCK);
-    this.deep2_3d = makeDeep2_3d(DEEP_ROCK);
-    yield 0.45;
-    yield* this.buildFormations(0.45, 0.82);
-    this.floor = yield* this.sub(this.makeFloor(), 0.82, 0.98, 120);
-    disposeReef3DRenderer();
+    const wantPixel = this.pixelMode;
+    const want3d = !wantPixel && this.reef3D;
+    const want2d = !wantPixel && !want3d;
+
+    this.bio = yield* this.sub(buildBiota(undefined, undefined, !wantPixel), 0, wantPixel ? 0.05 : 0.01, wantPixel ? 46 : 1);
+    this.farBio = yield* this.sub(
+      buildBiota([C("#1b6ab4"), 0.45], ["kelp", "fan", "whip", "staghorn", "table", "tubes", "grass", "brain", "pillar"], !wantPixel),
+      wantPixel ? 0.05 : 0.01,
+      wantPixel ? 0.07 : 0.015,
+      wantPixel ? 9 : 1
+    );
+    this.fgBio = yield* this.sub(
+      buildBiota([C("#030a1e"), 0.8], ["kelpBig", "fan2", "bamboo", "staghorn2", "whip2"], !wantPixel),
+      wantPixel ? 0.07 : 0.015,
+      wantPixel ? 0.09 : 0.02,
+      wantPixel ? 5 : 1
+    );
+
+    if (want3d) {
+      yield* this.sub(attach3dBiotaGen(this.bio), 0.02, 0.2, 82);
+      if (!this.bio.staghorn?.[0]?.f3d?.length) {
+        // Software/WebGL fallback to crisp 2D vectors
+        yield* this.sub(attach2dBiotaGen(this.bio), 0.2, 0.24, 44);
+        copy2dBiotaTint(this.farBio, this.bio, [C("#1b6ab4"), 0.45]);
+        copy2dBiotaTint(this.fgBio, this.bio, [C("#030a1e"), 0.8]);
+        this.fgDioramas2d = genForegroundOutcrops2d();
+        this.built2d = true;
+      } else {
+        copy3dBiotaTint(this.farBio, this.bio, [C("#1b6ab4"), 0.45]);
+        copy3dBiotaTint(this.fgBio, this.bio, [C("#030a1e"), 0.8]);
+        this.fgDioramas3d = genForegroundOutcrops3d();
+        this.built3d = true;
+      }
+      this.builtPixel = false;
+    } else if (want2d) {
+      yield* this.sub(attach2dBiotaGen(this.bio), 0.02, 0.16, 44);
+      copy2dBiotaTint(this.farBio, this.bio, [C("#1b6ab4"), 0.45]);
+      copy2dBiotaTint(this.fgBio, this.bio, [C("#030a1e"), 0.8]);
+      this.fgDioramas2d = genForegroundOutcrops2d();
+      this.built2d = true;
+    } else {
+      this.fgDioramas = yield* this.sub(genForegroundOutcrops(), 0.09, 0.14, 4);
+      this.builtPixel = true;
+    }
+
+    yield 0.22;
+    this.makeLightArt(wantPixel);
+    if (wantPixel) {
+      this.water = this.makeWater();
+      this.far1 = yield* this.sub(this.makeFar1(), 0.22, 0.25, 16);
+      this.far2 = yield* this.sub(this.makeFar2(), 0.25, 0.29, 24);
+      this.far3 = yield* this.sub(this.makeFar3(true), 0.29, 0.35, 66);
+      this.deep1 = yield* this.sub(this.makeDeep1(), 0.35, 0.4, 38);
+      this.deep2 = yield* this.sub(this.makeDeep2(true), 0.4, 0.49, 78);
+    } else {
+      this.water2d = this.makeWater2d();
+      this.waves2d = makeWaves2d();
+      this.far1_2d = makeFar1_2d();
+      yield 0.25;
+      this.far2_2d = makeFar2_2d();
+      yield 0.29;
+      yield* this.makeFar3(false);
+      if (want3d) this.far3_3d = makeFar3_3d(FAR_ROCK);
+      if (want2d || !this.far3_3d) this.far3_2d = makeFar3_2d(FAR_ROCK);
+      yield 0.35;
+      this.deep1_2d = makeDeep1_2d();
+      yield 0.4;
+      yield* this.makeDeep2(false);
+      if (want3d) this.deep2_3d = makeDeep2_3d(DEEP_ROCK);
+      if (want2d || !this.deep2_3d) this.deep2_2d = makeDeep2_2d(DEEP_ROCK);
+    }
+
+    yield 0.49;
+    yield* this.buildFormations(0.49, 0.88, wantPixel, want3d, want2d);
+    this.floor = yield* this.sub(this.makeFloor(wantPixel, want3d, want2d), 0.88, 0.99, wantPixel ? 120 : 1);
+    if (want3d) disposeReef3DRenderer();
 
     const r = rng(99);
     // drifting pixel/2D jellyfish: moon jellies up high, glowing ones in the dark
@@ -886,8 +985,6 @@ export class Ocean {
       const deep = i >= 12;
       this.schools.push({ x: r() * 3000, y: deep ? 1150 + r() * 1050 : 90 + r() * 720, dir: r() < 0.5 ? 1 : -1, speed: 9 + r() * 15, n: 9 + Math.floor(r() * 15), p: i % 2 === 0 ? 0.32 : 0.58, seed: r() * 100, deep });
     }
-    // god rays on three depth planes: wide soft shafts far behind the reef, medium shafts in front of the
-    // distant ridges, and crisp volumetric rays in front of everything
     const RAY_N = [9, 9, 6];
     for (let L = 0; L < 3; L++)
       for (let i = 0; i < RAY_N[L]; i++)
@@ -900,7 +997,6 @@ export class Ocean {
           layer: L,
           v: i % 3,
         });
-    // foreground silhouettes rooted below the bottom edge of the world (1.24x parallax)
     const span = WORLD_W * 1.24;
     for (let x = 30; x < span; x += 170 + r() * 260) {
       const big = r() < 0.45;
@@ -909,11 +1005,115 @@ export class Ocean {
     }
   }
 
+  /** Lazily hydrates unbuilt render mode assets (Pixel, 2D, or 3D) if the user switches mode after startup. */
+  ensureMode(pixelMode: boolean, reef3D: boolean) {
+    if (!this.ready) return;
+    if (pixelMode && !this.builtPixel) {
+      this.builtPixel = true;
+      hydratePixelBiota(this.bio);
+      hydratePixelBiota(this.farBio, [C("#1b6ab4"), 0.45], ["kelp", "fan", "whip", "staghorn", "table", "tubes", "grass", "brain", "pillar"]);
+      hydratePixelBiota(this.fgBio, [C("#030a1e"), 0.8], ["kelpBig", "fan2", "bamboo", "staghorn2", "whip2"]);
+      const exhaust = <T,>(g: Generator<void, T, void>): T => {
+        for (;;) {
+          const res = g.next();
+          if (res.done) return res.value;
+        }
+      };
+      if (!this.fgDioramas.length) this.fgDioramas = exhaust(genForegroundOutcrops());
+      if (!this.waves.length) this.makeWavesPixel();
+      if (!this.water) this.water = this.makeWater();
+      if (!this.far1) this.far1 = exhaust(this.makeFar1());
+      if (!this.far2) this.far2 = exhaust(this.makeFar2());
+      if (!this.far3) this.far3 = exhaust(this.makeFar3(true, false));
+      if (!this.deep1) this.deep1 = exhaust(this.makeDeep1());
+      if (!this.deep2) this.deep2 = exhaust(this.makeDeep2(true, false));
+      for (const f of this.formations) {
+        if (!f.cv || !f.col) this.hydrateFormationPixel(f);
+      }
+      if (!this.floor) this.floor = this.hydrateFloorPixel();
+    } else if (!pixelMode && !reef3D && !this.built2d) {
+      this.built2d = true;
+      attach2dBiota(this.bio);
+      copy2dBiotaTint(this.farBio, this.bio, [C("#1b6ab4"), 0.45]);
+      copy2dBiotaTint(this.fgBio, this.bio, [C("#030a1e"), 0.8]);
+      if (!this.fgDioramas2d.length) this.fgDioramas2d = genForegroundOutcrops2d();
+      if (!this.water2d) this.water2d = this.makeWater2d();
+      if (!this.waves2d.length) this.waves2d = makeWaves2d();
+      if (!this.far1_2d) this.far1_2d = makeFar1_2d();
+      if (!this.far2_2d) this.far2_2d = makeFar2_2d();
+      if (!this.far3_2d) this.far3_2d = makeFar3_2d(FAR_ROCK);
+      if (!this.deep1_2d) this.deep1_2d = makeDeep1_2d();
+      if (!this.deep2_2d) this.deep2_2d = makeDeep2_2d(DEEP_ROCK);
+      const waterRgbFn = (yPos: number): [number, number, number] => {
+        const c = waterC(yPos);
+        return [c & 255, (c >> 8) & 255, (c >> 16) & 255];
+      };
+      for (const f of this.formations) {
+        const st = ROCK[f.zone];
+        if (!f.cv2d) f.cv2d = paintPinnacle2d(f.top, f.bot, f.w, f.h, st, f.seed, f.rx, f.ry, f.cxl, f.cyl, f.zone, f.caveSpec);
+        if (!f.caveRim2d) f.caveRim2d = paintCaveRim2d(f.top, f.bot, f.w, f.h, st, f.seed, f.caveSpec);
+        if (!f.col2d) f.col2d = paintColumn2d(f.colW, f.colH, f.colTop, f.colHw0, f.colRooted, st, f.colSeed, waterRgbFn);
+      }
+      if (!this.floor2d && this.floorTop) this.floor2d = paintFloor2d(this.floorTop, this.floorW, this.floorH, ROCK[3]);
+    } else if (!pixelMode && reef3D && !this.built3d) {
+      this.built3d = true;
+      const g3 = attach3dBiotaGen(this.bio);
+      while (!g3.next().done) { /* sync */ }
+      copy3dBiotaTint(this.farBio, this.bio, [C("#1b6ab4"), 0.45]);
+      copy3dBiotaTint(this.fgBio, this.bio, [C("#030a1e"), 0.8]);
+      if (!this.fgDioramas3d.length) this.fgDioramas3d = genForegroundOutcrops3d();
+      if (!this.water2d) this.water2d = this.makeWater2d();
+      if (!this.waves2d.length) this.waves2d = makeWaves2d();
+      if (!this.far1_2d) this.far1_2d = makeFar1_2d();
+      if (!this.far2_2d) this.far2_2d = makeFar2_2d();
+      if (!this.far3_3d) this.far3_3d = makeFar3_3d(FAR_ROCK);
+      if (!this.deep1_2d) this.deep1_2d = makeDeep1_2d();
+      if (!this.deep2_3d) this.deep2_3d = makeDeep2_3d(DEEP_ROCK);
+      const waterRgbFn = (yPos: number): [number, number, number] => {
+        const c = waterC(yPos);
+        return [c & 255, (c >> 8) & 255, (c >> 16) & 255];
+      };
+      for (const f of this.formations) {
+        const st = ROCK[f.zone];
+        if (!f.cv3d) f.cv3d = paintPinnacle3d(f.top, f.bot, f.w, f.h, st, f.seed, f.rx, f.ry, f.cxl, f.cyl, f.zone, f.caveSpec);
+        if (!f.caveRim3d) f.caveRim3d = paintCaveRim3d(f.top, f.bot, f.w, f.h, st, f.seed, f.caveSpec);
+        if (!f.col3d) f.col3d = paintColumn3d(f.colW, f.colH, f.colTop, f.colHw0, f.colRooted, st, f.colSeed, waterRgbFn);
+      }
+      if (!this.floor3d && this.floorTop) this.floor3d = paintFloor3d(this.floorTop, this.floorW, this.floorH, ROCK[3]);
+      disposeReef3DRenderer();
+    }
+  }
+
   // ==========================================================================
   // WATER COLUMN — dithered 16-bit depth bands from sunlit aqua to abyssal black
   // ==========================================================================
+  private makeWavesPixel() {
+    if (this.waves.length) return;
+    const px = (a: number, r: number, g: number, b: number) => ((Math.max(0, Math.min(255, Math.round(a))) << 24) | (b << 16) | (g << 8) | r) >>> 0;
+    void px;
+    for (let v = 0; v < 2; v++) {
+      const W = 256,
+        H = 16,
+        p = new Pix(W, H),
+        K = TAU / W;
+      const FO = C("#ffffff"),
+        L1 = C("#d6fcff"),
+        L2 = C("#a2f2ff");
+      for (let x = 0; x < W; x++) {
+        const y0 = Math.round(4 + (v ? 1.6 * Math.sin(x * K * 5 + 1) + 1.1 * Math.sin(x * K * 11) : 2.2 * Math.sin(x * K * 3) + Math.sin(x * K * 8 + 2)));
+        p.set(x, y0, FO);
+        p.set(x, y0 + 1, FO);
+        p.set(x, y0 + 2, L1);
+        p.set(x, y0 + 3, L1);
+        for (let d = 4; d < 10; d++) if (bayer(x, y0 + d) > (d - 3) / 7) p.set(x, y0 + d, L2);
+        if (hash2(x, v, 7) < 0.05) p.set(x, y0 + 6 + ((hash2(x, v, 9) * 4) | 0), FO);
+      }
+      this.waves.push(p.toCanvas());
+    }
+  }
+
   /** Builds the small sprites the lighting is made of: light shafts, caustic nets, surface waves, mist, vignette. */
-  private makeLightArt() {
+  private makeLightArt(buildPixelWaves = true) {
     const px = (a: number, r: number, g: number, b: number) => ((Math.max(0, Math.min(255, Math.round(a))) << 24) | (b << 16) | (g << 8) | r) >>> 0;
     // ---- light shafts: 3 optical dispersion beams (golden sunlit core, prism aqua, deep twilight cobalt) ----
     for (let v = 0; v < 3; v++) {
@@ -959,26 +1159,7 @@ export class Ocean {
       }
       this.caust.push(p.toCanvas());
     }
-    // ---- sea surface: two pixel-art wave strips that slide against each other ----
-    for (let v = 0; v < 2; v++) {
-      const W = 256,
-        H = 16,
-        p = new Pix(W, H),
-        K = TAU / W;
-      const FO = C("#ffffff"),
-        L1 = C("#d6fcff"),
-        L2 = C("#a2f2ff");
-      for (let x = 0; x < W; x++) {
-        const y0 = Math.round(4 + (v ? 1.6 * Math.sin(x * K * 5 + 1) + 1.1 * Math.sin(x * K * 11) : 2.2 * Math.sin(x * K * 3) + Math.sin(x * K * 8 + 2)));
-        p.set(x, y0, FO);
-        p.set(x, y0 + 1, FO);
-        p.set(x, y0 + 2, L1);
-        p.set(x, y0 + 3, L1);
-        for (let d = 4; d < 10; d++) if (bayer(x, y0 + d) > (d - 3) / 7) p.set(x, y0 + d, L2);
-        if (hash2(x, v, 7) < 0.05) p.set(x, y0 + 6 + ((hash2(x, v, 9) * 4) | 0), FO);
-      }
-      this.waves.push(p.toCanvas());
-    }
+    if (buildPixelWaves) this.makeWavesPixel();
     // ---- soft luminous mist bands that mark where one depth zone hands over to the next ----
     for (const col of ["140, 224, 255", "146, 128, 255", "255, 138, 84"]) {
       const cv = document.createElement("canvas");
@@ -1251,26 +1432,28 @@ export class Ocean {
   // LAYER 2 (0.42x): Midground Stone Formations & Coral Terraces
   // Deeper oceanic blue-teal rock formations with visible fans & sponges
   // ==========================================================================
-  private *makeFar3(): Generator<void, HTMLCanvasElement, void> {
+  private *makeFar3(buildPixel = true, plantInsts = true): Generator<void, HTMLCanvasElement | undefined, void> {
     const w = 2100,
       h = 540,
-      p = new Pix(w, h),
-      m = new Uint8Array(w * h),
       r = rng(509);
     const top = new Int16Array(w);
     for (let x = 0; x < w; x++) {
       const t = (x / w) * TAU;
-      const y =
+      top[x] =
         Math.round(
           (256 - Math.sin(t * 3 + 0.4) * 58 - Math.cos(t * 6 + 2) * 30 + Math.sin(t * 23) * 6) / 3
         ) * 3;
-      top[x] = y;
-      for (let yy = y; yy < h; yy++) m[yy * w + x] = 1;
     }
+    if (plantInsts) {
+      plant(r, this.farBio, FAR_TBL, top, 8, w - 8, 0, 0, this.farInsts, 4);
+      this.farInsts.sort((a, b) => b.s.h - a.s.h);
+    }
+    if (!buildPixel) return undefined;
+    const p = new Pix(w, h),
+      m = new Uint8Array(w * h);
+    for (let x = 0; x < w; x++) for (let yy = top[x]; yy < h; yy++) m[yy * w + x] = 1;
     yield* paintRock(p, m, FAR_ROCK, 509, 17);
     fadeBottom(p, 150);
-    plant(r, this.farBio, FAR_TBL, top, 8, w - 8, 0, 0, this.farInsts, 4);
-    this.farInsts.sort((a, b) => b.s.h - a.s.h);
     return p.toCanvas();
   }
 
@@ -1286,13 +1469,33 @@ export class Ocean {
     return p.toCanvas();
   }
 
-  private *makeDeep2(): Generator<void, HTMLCanvasElement, void> {
+  private *makeDeep2(buildPixel = true, addGlows = true): Generator<void, HTMLCanvasElement | undefined, void> {
     const w = 2000,
       h = 1420,
-      r = rng(1414),
-      p = new Pix(w, h);
+      r = rng(1414);
+    const glows = ["rgba(60, 220, 255, 0.5)", "rgba(240, 110, 250, 0.5)", "rgba(150, 130, 255, 0.5)"];
+    if (!buildPixel) {
+      if (addGlows) {
+        const caps: [number, number, number][] = [];
+        for (let i = 0; i < 7; i++) {
+          const cx = ((i + 0.3 + r() * 0.4) * w) / 7;
+          const ty = 90 + r() * (770 - 90);
+          const R = 46 + r() * (96 - 46);
+          r(); r(); r(); // align s1, lean + ch consumption
+          caps.push([cx, ty, R]);
+        }
+        for (const [cx, ty, R] of caps) {
+          for (let k = 0; k < 3; k++) {
+            const vi = (k + ((r() * 3) | 0)) % 3;
+            this.deepGlows.push({ x: cx + (r() - 0.5) * R, y: ty + r() * 30, c: glows[vi], ph: r() * 6 });
+          }
+        }
+      }
+      return undefined;
+    }
+
+    const p = new Pix(w, h);
     const { m, caps } = yield* spireMask(w, h, r, 7, 90, 770, 46, 96);
-    // natural stone arches bridging neighbouring pinnacles
     for (const i of [1, 4]) {
       const a = caps[i],
         b = caps[i + 1];
@@ -1307,7 +1510,6 @@ export class Ocean {
         for (let y = Math.round(yc - th * 0.4); y <= yc + th * 0.6; y++) if (y >= 0 && y < h) m[y * w + x] = 1;
       }
     }
-    // distant coral silhouettes rooted on every cap
     const DP = P("#0c1040", "#1a2068", "#2c3a98", "#4658c0", "#7ad8f0");
     for (const [cx, ty, R, ch] of caps) {
       for (let k = 0; k < 4; k++) {
@@ -1323,10 +1525,9 @@ export class Ocean {
       yield;
     }
     yield* paintRock(p, m, DEEP_ROCK, 1414, 17);
-    p.tint(C("#171b5c"), 0.4); // heavy haze: these pinnacles are scenery far behind the playable reef
+    p.tint(C("#171b5c"), 0.4);
     yield;
-    const veins = [C("#52e6ff"), C("#f07af6"), C("#9c8cff")],
-      glows = ["rgba(60, 220, 255, 0.5)", "rgba(240, 110, 250, 0.5)", "rgba(150, 130, 255, 0.5)"];
+    const veins = [C("#52e6ff"), C("#f07af6"), C("#9c8cff")];
     for (const [cx, ty, R] of caps) {
       for (let k = 0; k < 3; k++) {
         let x = cx + (r() - 0.5) * R * 1.2,
@@ -1339,7 +1540,7 @@ export class Ocean {
           const xi = ((Math.round(x) % w) + w) % w;
           if (p.get(xi, Math.round(y)) && s % 5 !== 4) p.set(xi, Math.round(y), veins[vi]);
         }
-        this.deepGlows.push({ x: cx + (r() - 0.5) * R, y: ty + r() * 30, c: glows[vi], ph: r() * 6 });
+        if (addGlows) this.deepGlows.push({ x: cx + (r() - 0.5) * R, y: ty + r() * 30, c: glows[vi], ph: r() * 6 });
       }
     }
     return p.toCanvas();
@@ -1348,7 +1549,7 @@ export class Ocean {
   // ==========================================================================
   // MAIN PLANE: reef pinnacles (collidable crown + rooted stem) at three depth levels
   // ==========================================================================
-  private *buildFormations(p0: number, p1: number): Generator<number | void, void, void> {
+  private *buildFormations(p0: number, p1: number, wantPixel: boolean, want3d: boolean, want2d: boolean): Generator<number | void, void, void> {
     const r = rng(2026);
     const specs: [number, number, number, number, number][] = [
       // Zona Cahaya — sunlit sandy coral islands
@@ -1376,7 +1577,7 @@ export class Ocean {
     ];
     let done = 0;
     for (const [x, y, rx, ry, z] of specs) {
-      const f = yield* this.makePinnacle(r, x, y, rx, ry, z, done);
+      const f = yield* this.makePinnacle(r, x, y, rx, ry, z, done, wantPixel, want3d, want2d);
       this.formations.push(f);
       if (f.cave) this.caves.push(f.cave);
       yield p0 + ((p1 - p0) * ++done) / specs.length;
@@ -1384,7 +1585,94 @@ export class Ocean {
     for (const f of this.formations) this.colliders.push(...f.colliders);
   }
 
-  private *makePinnacle(r: Rnd, wx: number, wy: number, rx: number, ry: number, zone: number, idx = 0): Generator<void, Formation, void> {
+  private paintPinnacleMaskAndPixel(
+    W: number,
+    H: number,
+    top: Int16Array,
+    bot: Int16Array,
+    zone: number,
+    seed: number,
+    caveSpec: CaveSpec2d,
+    shades: { x: number; y: number; f: number }[]
+  ): { cv: HTMLCanvasElement; caveRim: HTMLCanvasElement } {
+    const p = new Pix(W, H),
+      m = new Uint8Array(W * H);
+    for (let x = 0; x < W; x++) if (top[x] >= 0) for (let y = top[x]; y <= bot[x]; y++) m[y * W + x] = 1;
+    const st = ROCK[zone];
+    const g = paintRock(p, m, st, seed, 15);
+    while (!g.next().done) { /* sync */ }
+    const caveBounds = sampleCaveBounds(caveSpec, seed, W);
+    const rimPix = new Pix(W, H);
+    const deepVoid = C("#020410");
+    const crystalPix = zone >= 2 ? C("#c4b5fd") : C("#7af0ff");
+    for (let x = caveBounds.xMin; x <= caveBounds.xMax; x++) {
+      const cy0 = caveBounds.ceil[x];
+      const cy1 = caveBounds.floor[x];
+      if (cy0 < 0 || cy1 < cy0) continue;
+      const f =
+        caveSpec.kind === "tunnel"
+          ? Math.abs((x - caveSpec.gx) / Math.max(1, caveSpec.grx * 1.12))
+          : clamp01((x - (caveSpec.gx - caveSpec.dir * caveSpec.grx * 0.86)) / Math.max(1, caveSpec.dir * caveSpec.grx * 2.1));
+      for (let y = Math.max(1, cy0); y <= Math.min(H - 2, cy1); y++) {
+        if (!m[y * W + x]) continue;
+        if (caveSpec.kind === "tunnel") {
+          const v = (y - cy0) / Math.max(1, cy1 - cy0);
+          p.d[y * W + x] = v < 0.28 ? deepVoid : v < 0.82 ? st.ramp[0] : st.ramp[1];
+        } else {
+          p.d[y * W + x] = f < 0.45 ? deepVoid : f < 0.78 ? st.ramp[0] : st.ramp[1];
+        }
+        if (y === cy1 - 2 && bayer(x, y) > 0.82 && x % 7 === 0) p.d[y * W + x] = crystalPix;
+      }
+      if (cy1 - cy0 > caveSpec.gry * 0.72) {
+        for (let dy = -3; dy <= 0; dy++) {
+          const ry0 = cy0 + dy;
+          if (ry0 >= 1 && ry0 < H - 1 && m[ry0 * W + x]) {
+            const col = dy < -1 ? st.ramp[3] : st.ramp[1];
+            p.d[ry0 * W + x] = dy === -3 ? st.ramp[4] : col;
+            rimPix.d[ry0 * W + x] = col;
+          }
+        }
+      }
+    }
+    for (const s of shades) {
+      for (let dx = -s.f - 2; dx <= s.f + 2; dx++) {
+        const xi = s.x + dx;
+        if (xi < 0 || xi >= W) continue;
+        for (let dy = 0; dy < 3; dy++) {
+          const yi = s.y + dy;
+          if (yi < H && m[yi * W + xi] && (dy < 2 || bayer(xi, yi) < 0.55)) p.d[yi * W + xi] = dy === 0 ? st.crust[0] : st.ramp[2];
+        }
+      }
+    }
+    return { cv: p.toCanvas(), caveRim: rimPix.toCanvas() };
+  }
+
+  private hydrateFormationPixel(f: Formation) {
+    const res = this.paintPinnacleMaskAndPixel(f.w, f.h, f.top, f.bot, f.zone, f.seed, f.caveSpec, f.shades);
+    f.cv = res.cv;
+    f.caveRim = res.caveRim;
+    const g = this.makeColumn(rng(f.colSeed), f.colTop, f.colTop + f.colH, f.colHw0, f.colRooted, f.zone, f.colSeed);
+    for (;;) {
+      const r = g.next();
+      if (r.done) {
+        f.col = r.value;
+        break;
+      }
+    }
+  }
+
+  private *makePinnacle(
+    r: Rnd,
+    wx: number,
+    wy: number,
+    rx: number,
+    ry: number,
+    zone: number,
+    idx = 0,
+    wantPixel = true,
+    want3d = false,
+    want2d = false
+  ): Generator<void, Formation, void> {
     const seed = (r() * 1e6) | 0;
     const padX = 12,
       padT = 6,
@@ -1395,8 +1683,6 @@ export class Ocean {
       cyl = padT + Math.round(ry * 0.84);
     const ox = Math.round(wx) - cxl,
       oy = Math.round(wy) - cyl;
-    const p = new Pix(W, H),
-      m = new Uint8Array(W * H);
     const top = new Int16Array(W).fill(-1),
       bot = new Int16Array(W).fill(-1);
     const s1 = r() * 9,
@@ -1408,21 +1694,18 @@ export class Ocean {
     for (let x = 0; x < W; x++) {
       const u = (x - cxl) / rx;
       if (Math.abs(u) >= 1) continue;
-      // smooth rolling reef ledge profile (no blocky 4px stair-steps)
       const ty = Math.max(1, Math.round(cyl - ry * 0.8 * Math.pow(1 - Math.pow(Math.abs(u), 2.6), 0.6) + Math.sin(x * 0.047 + s1) * 4.5 + Math.sin(x * 0.11 + s2) * 1.8));
-      const drip = zone > 0 ? Math.pow(Math.max(0, Math.sin(x * 0.19 + s4)), 5) * ry * 0.34 : Math.pow(Math.max(0, Math.sin(x * 0.15 + s4)), 3) * ry * 0.12;
-      const by = Math.min(H - 2, Math.round(cyl + ry * 0.84 * Math.sqrt(1 - u * u) * (0.82 + 0.18 * Math.sin(x * 0.06 + s3)) + drip));
+      const cragBase = Math.sin(x * 0.055 + s4) * 0.5 + Math.cos(x * 0.115 + s2 * 1.3) * 0.35 + Math.sin(x * 0.025 + s1) * 0.25;
+      const drip = Math.max(0, cragBase) * ry * (zone > 0 ? 0.14 : 0.08);
+      const by = Math.min(H - 2, Math.round(cyl + ry * 0.84 * Math.sqrt(1 - u * u) * (0.85 + 0.15 * Math.sin(x * 0.06 + s3)) + drip));
       if (by - ty < 6) continue;
       top[x] = ty;
       bot[x] = by;
       if (firstX < 0) firstX = x;
       lastX = x;
-      for (let y = ty; y <= by; y++) m[y * W + x] = 1;
     }
     const st = ROCK[zone];
-    yield* paintRock(p, m, st, seed, 15);
 
-    // Every formation features a carved cave / shelter hole (Gua / Terowongan Karang)
     const caveKind: "alcove" | "tunnel" = idx % 3 === 1 ? "tunnel" : "alcove";
     const caveDir = caveKind === "tunnel" ? 0 : idx % 3 === 0 ? 1 : -1;
     const gy = Math.round(cyl + ry * 0.03);
@@ -1442,54 +1725,12 @@ export class Ocean {
       dir: caveDir,
       zone,
     };
-
     const caveBounds = sampleCaveBounds(caveSpec, seed, W);
 
-    // Pixel-mode carved cave chamber + foreground upper lip (matches exact SDF & 2D bounds)
-    const rimPix = new Pix(W, H);
-    const deepVoid = C("#020410");
-    const crystalPix = zone >= 2 ? C("#c4b5fd") : C("#7af0ff");
-    for (let x = caveBounds.xMin; x <= caveBounds.xMax; x++) {
-      const cy0 = caveBounds.ceil[x];
-      const cy1 = caveBounds.floor[x];
-      if (cy0 < 0 || cy1 < cy0) continue;
-      const f =
-        caveKind === "tunnel"
-          ? Math.abs((x - gx) / Math.max(1, grx * 1.12))
-          : clamp01((x - (gx - caveDir * grx * 0.86)) / Math.max(1, caveDir * grx * 2.1));
-      for (let y = Math.max(1, cy0); y <= Math.min(H - 2, cy1); y++) {
-        if (!m[y * W + x]) continue;
-        if (caveKind === "tunnel") {
-          const v = (y - cy0) / Math.max(1, cy1 - cy0);
-          p.d[y * W + x] = v < 0.28 ? deepVoid : v < 0.82 ? st.ramp[0] : st.ramp[1];
-        } else {
-          p.d[y * W + x] = f < 0.45 ? deepVoid : f < 0.78 ? st.ramp[0] : st.ramp[1];
-        }
-        if (y === cy1 - 2 && bayer(x, y) > 0.82 && x % 7 === 0) p.d[y * W + x] = crystalPix;
-      }
-      if (cy1 - cy0 > gry * 0.72) {
-        for (let dy = -3; dy <= 0; dy++) {
-          const ry0 = cy0 + dy;
-          if (ry0 >= 1 && ry0 < H - 1 && m[ry0 * W + x]) {
-            const col = dy < -1 ? st.ramp[3] : st.ramp[1];
-            p.d[ry0 * W + x] = dy === -3 ? st.ramp[4] : col;
-            rimPix.d[ry0 * W + x] = col;
-          }
-        }
-      }
-    }
-
-    // ---- plant the crown: every holdfast is embedded in the rock + gets a contact shadow ----
     const insts: Inst[] = [];
+    const shades: { x: number; y: number; f: number }[] = [];
     const shade = (x: number, y: number, f: number) => {
-      for (let dx = -f - 2; dx <= f + 2; dx++) {
-        const xi = x + dx;
-        if (xi < 0 || xi >= W) continue;
-        for (let dy = 0; dy < 3; dy++) {
-          const yi = y + dy;
-          if (yi < H && m[yi * W + xi] && (dy < 2 || bayer(xi, yi) < 0.55)) p.d[yi * W + xi] = dy === 0 ? st.crust[0] : st.ramp[2];
-        }
-      }
+      shades.push({ x, y, f });
     };
     const occ = new Uint8Array(W);
     const px0 = Math.max(firstX + 5, Math.round(cxl - rx * 0.9)),
@@ -1498,7 +1739,6 @@ export class Ocean {
     plant(r, this.bio, FILL_BIO[zone], top, px0, px1, ox, oy, insts, 4, shade, occ, true);
     insts.sort((a, b) => b.s.h - a.s.h);
 
-    // starfish clinging to the upper rock face (kept above the cave ceiling)
     const stars = this.bio[STAR_BIO[zone]];
     for (let k = 0; k < 2; k++) {
       const x = Math.round(firstX + 30 + r() * (lastX - firstX - 60));
@@ -1506,15 +1746,15 @@ export class Ocean {
         insts.push({ s: stars[(r() * stars.length) | 0], x: ox + x, y: oy + top[x] + 10 + ((r() * 5) | 0), ph: r() * NF, flip: false, hide: 0 });
       }
     }
-    // bracket corals growing out of cliff walls (skip open cave mouths so nothing floats in mid-air!)
     const shelf = this.bio[SIDE_BIO[zone]];
+    const isSolidAt = (x: number, y: number) => top[x] >= 0 && y >= top[x] && y <= bot[x];
     for (const fy of [-0.36, -0.02, 0.34]) {
       const yy = Math.round(cyl + ry * fy);
       const inCaveMouthY = yy >= gy - gry - 6 && yy <= gy + gry + 6;
       let xl = 0;
-      while (xl < W && !m[yy * W + xl]) xl++;
+      while (xl < W && !isSolidAt(xl, yy)) xl++;
       let xr = W - 1;
-      while (xr > 0 && !m[yy * W + xr]) xr--;
+      while (xr > 0 && !isSolidAt(xr, yy)) xr--;
       if (xl >= xr) continue;
       const openLeft = caveKind === "tunnel" || caveDir === -1;
       const openRight = caveKind === "tunnel" || caveDir === 1;
@@ -1525,7 +1765,6 @@ export class Ocean {
         insts.push({ s: shelf[(r() * shelf.length) | 0], x: ox + xr - 3, y: oy + yy, ph: r() * NF, flip: false, hide: 0 });
       }
     }
-    // vines hanging from the overhang (anchored below the cave sill, avoiding cave entrance edges)
     const vines = this.bio[HANG_BIO[zone]];
     for (let x = firstX + 16 + r() * 20; x < lastX - 16; x += 24 + r() * 34) {
       const xi = Math.round(x);
@@ -1535,71 +1774,80 @@ export class Ocean {
     }
     if (zone < 2) this.crabs.push({ top, ox, oy, x0: cxl + (r() - 0.5) * rx * 0.6, range: rx * 0.32, sp: 0.22 + r() * 0.15, ph: r() * 6, v: (r() * 2) | 0 });
 
-    // ---- the stem: a rooted pinnacle column on the back plane ----
     const colTop = Math.round(wy + ry * 0.25);
     const rooted = zone >= 2;
     const colBot = rooted ? Math.round(floorY(wx)) + 18 : Math.round(wy + ry + 350 + r() * 120);
-    const col = yield* this.makeColumn(r, colTop, colBot, rx * 0.3, rooted, zone, seed + 5);
-    const cv2d = paintPinnacle2d(top, bot, W, H, st, seed, rx, ry, cxl, cyl, zone, caveSpec);
-    const cv3d = paintPinnacle3d(top, bot, W, H, st, seed, rx, ry, cxl, cyl, zone, caveSpec);
-    const caveRim2d = paintCaveRim2d(top, bot, W, H, st, seed, caveSpec);
-    const caveRim3d = paintCaveRim3d(top, bot, W, H, st, seed, caveSpec);
+    const colHw0 = rx * 0.3;
+    const colSeed = seed + 5;
+    const colH = Math.max(40, colBot - colTop);
+    const colW = Math.round(colHw0 * 3.4 + (rooted ? 140 : 54));
+
+    let cv: HTMLCanvasElement | undefined;
+    let caveRim: HTMLCanvasElement | undefined;
+    let col: HTMLCanvasElement | undefined;
+    if (wantPixel) {
+      const pxRes = this.paintPinnacleMaskAndPixel(W, H, top, bot, zone, seed, caveSpec, shades);
+      cv = pxRes.cv;
+      caveRim = pxRes.caveRim;
+      col = yield* this.makeColumn(r, colTop, colBot, colHw0, rooted, zone, colSeed);
+    } else {
+      // keep RNG state aligned with makeColumn's initial 5 draws
+      r(); r(); r(); r(); r();
+    }
+
     const waterRgbFn = (yPos: number): [number, number, number] => {
       const c = waterC(yPos);
       return [c & 255, (c >> 8) & 255, (c >> 16) & 255];
     };
-    const col2d = paintColumn2d(col.width, col.height, colTop, rx * 0.3, rooted, st, seed + 5, waterRgbFn);
-    const col3d = paintColumn3d(col.width, col.height, colTop, rx * 0.3, rooted, st, seed + 5, waterRgbFn);
+    const cv3d = want3d ? paintPinnacle3d(top, bot, W, H, st, seed, rx, ry, cxl, cyl, zone, caveSpec) : undefined;
+    const caveRim3d = want3d ? paintCaveRim3d(top, bot, W, H, st, seed, caveSpec) : undefined;
+    const col3d = want3d ? paintColumn3d(colW, colH, colTop, colHw0, rooted, st, colSeed, waterRgbFn) : undefined;
+    const need2d = want2d || (want3d && (!cv3d || !col3d));
+    const cv2d = need2d ? paintPinnacle2d(top, bot, W, H, st, seed, rx, ry, cxl, cyl, zone, caveSpec) : undefined;
+    const caveRim2d = need2d ? paintCaveRim2d(top, bot, W, H, st, seed, caveSpec) : undefined;
+    const col2d = need2d ? paintColumn2d(colW, colH, colTop, colHw0, rooted, st, colSeed, waterRgbFn) : undefined;
 
-    // Hollowed colliders: solid ceiling & floor sill + back cliff (if alcove) + size-gated mouth blockers!
     const caveWorldY = wy + ry * 0.08;
     const colliders: RockCollider[] = [];
     if (caveKind === "tunnel") {
-      // Solid roof arch above tunnel
       colliders.push(
         { x: wx - rx * 0.58, y: wy - ry * 0.42, r: ry * 0.22 },
         { x: wx - rx * 0.22, y: wy - ry * 0.52, r: ry * 0.26 },
         { x: wx + rx * 0.22, y: wy - ry * 0.52, r: ry * 0.26 },
         { x: wx + rx * 0.58, y: wy - ry * 0.42, r: ry * 0.22 },
-        // Solid bottom sill below tunnel
         { x: wx - rx * 0.58, y: wy + ry * 0.54, r: ry * 0.18 },
         { x: wx - rx * 0.22, y: wy + ry * 0.62, r: ry * 0.20 },
         { x: wx + rx * 0.22, y: wy + ry * 0.62, r: ry * 0.20 },
         { x: wx + rx * 0.58, y: wy + ry * 0.54, r: ry * 0.18 },
-        // Predator gates at both tunnel mouths (block fish with f.r > maxPassR)
         { x: wx - rx * 0.76, y: caveWorldY, r: gry * 0.96, maxPassR },
         { x: wx + rx * 0.76, y: caveWorldY, r: gry * 0.96, maxPassR }
       );
     } else {
       const d = caveDir;
-      // Solid closed cliff half + back cave wall
       colliders.push(
         { x: wx - d * rx * 0.54, y: wy, r: ry * 0.64 },
         { x: wx - d * rx * 0.24, y: wy, r: ry * 0.56 },
-        // Solid roof arch over cave
         { x: wx + d * rx * 0.16, y: wy - ry * 0.50, r: ry * 0.24 },
         { x: wx + d * rx * 0.46, y: wy - ry * 0.46, r: ry * 0.23 },
         { x: wx + d * rx * 0.74, y: wy - ry * 0.38, r: ry * 0.20 },
-        // Solid floor sill under cave
         { x: wx + d * rx * 0.16, y: wy + ry * 0.62, r: ry * 0.20 },
         { x: wx + d * rx * 0.46, y: wy + ry * 0.59, r: ry * 0.19 },
         { x: wx + d * rx * 0.74, y: wy + ry * 0.52, r: ry * 0.17 },
-        // Predator gate at the cave mouth (blocks fish with f.r > maxPassR)
         { x: wx + d * rx * 0.76, y: caveWorldY, r: gry * 0.96, maxPassR }
       );
     }
-    const sdfCave = buildRockSDF(W, H, top, bot, caveBounds);
-    const sdfSolid = buildRockSDF(W, H, top, bot, null);
+    const sdfCave = buildRockSDF(W, H, top, bot, caveBounds, 52, 3);
+    const sdfSolid = buildRockSDF(W, H, top, bot, null, 52, 4);
 
     return {
       x: ox,
       y: oy,
       w: W,
       h: H,
-      cv: p.toCanvas(),
+      cv,
       cv2d,
       cv3d,
-      caveRim: rimPix.toCanvas(),
+      caveRim,
       caveRim2d,
       caveRim3d,
       cave,
@@ -1608,8 +1856,24 @@ export class Ocean {
       col,
       col2d,
       col3d,
-      colX: Math.round(wx) - (col.width >> 1),
+      colW,
+      colH,
+      colTop,
+      colHw0,
+      colRooted: rooted,
+      colSeed,
+      colX: Math.round(wx) - (colW >> 1),
       colY: colTop,
+      top,
+      bot,
+      zone,
+      seed,
+      rx,
+      ry,
+      cxl,
+      cyl,
+      caveSpec,
+      shades,
       insts,
       colliders,
     };
@@ -1635,7 +1899,6 @@ export class Ocean {
       for (let x = a; x <= b; x++) m[y * W + x] = 1;
     }
     yield* paintRock(p, m, ROCK[zone], seed, 19, 1, false);
-    // atmospheric haze: the stem recedes into the water colour and (if not rooted on screen) dithers away
     for (let y = 0; y < H; y++) {
       const t = y / H,
         wc = waterC(yTop + y),
@@ -1651,16 +1914,39 @@ export class Ocean {
     return p.toCanvas();
   }
 
+  private hydrateFloorPixel(): HTMLCanvasElement {
+    const W = this.floorW,
+      H = this.floorH,
+      top = this.floorTop!;
+    const p = new Pix(W, H),
+      m = new Uint8Array(W * H);
+    for (let x = 0; x < W; x++) for (let y = top[x]; y < H; y++) m[y * W + x] = 1;
+    const st = ROCK[3];
+    const g = paintRock(p, m, st, 77, 22);
+    while (!g.next().done) { /* sync */ }
+    const sp = [C("#62e8ff"), C("#f48af0"), C("#9c8cff")];
+    for (let x = 2; x < W - 2; x++) if (hash2(x, 9, 4) < 0.035) p.set(x, top[x] + 1 + ((hash2(x, 2, 4) * 3) | 0), sp[(hash2(x, 5, 4) * 3) | 0]);
+    for (const s of this.floorShades) {
+      for (let dx = -s.f - 2; dx <= s.f + 2; dx++) {
+        const xi = s.x + dx;
+        if (xi < 0 || xi >= W) continue;
+        for (let dy = 0; dy < 3; dy++) {
+          const yi = s.y + dy;
+          if (yi >= top[xi] && yi < H && (dy < 2 || bayer(xi, yi) < 0.55)) p.d[yi * W + xi] = dy === 0 ? st.crust[0] : st.ramp[2];
+        }
+      }
+    }
+    return p.toCanvas();
+  }
+
   // ==========================================================================
   // ABYSSAL FLOOR: boulders, sediment, black smokers, tube-worm colonies, treasure
   // ==========================================================================
-  private *makeFloor(): Generator<void, HTMLCanvasElement, void> {
+  private *makeFloor(wantPixel = true, want3d = false, want2d = false): Generator<void, HTMLCanvasElement | undefined, void> {
     const W = WORLD_W,
       H = WORLD_H + 75 - FLOOR_TOP,
       O = FLOOR_TOP;
-    const p = new Pix(W, H),
-      m = new Uint8Array(W * H),
-      top = new Int16Array(W),
+    const top = new Int16Array(W),
       r = rng(1234);
     for (let x = 0; x < W; x++) top[x] = Math.round(floorY(x)) - O;
     for (let i = 0; i < 46; i++) {
@@ -1674,25 +1960,15 @@ export class Ocean {
         if (yy < top[x]) top[x] = yy;
       }
     }
-    for (let x = 0; x < W; x++) for (let y = top[x]; y < H; y++) m[y * W + x] = 1;
+    this.floorTop = top;
+    this.floorW = W;
+    this.floorH = H;
     const st = ROCK[3];
-    yield* paintRock(p, m, st, 77, 22);
-    yield;
-    // bioluminescent specks in the sediment
-    const sp = [C("#62e8ff"), C("#f48af0"), C("#9c8cff")];
-    for (let x = 2; x < W - 2; x++) if (hash2(x, 9, 4) < 0.035) p.set(x, top[x] + 1 + ((hash2(x, 2, 4) * 3) | 0), sp[(hash2(x, 5, 4) * 3) | 0]);
 
     const shade = (x: number, y: number, f: number) => {
-      for (let dx = -f - 2; dx <= f + 2; dx++) {
-        const xi = x + dx;
-        if (xi < 0 || xi >= W) continue;
-        for (let dy = 0; dy < 3; dy++) {
-          const yi = y + dy;
-          if (yi >= top[xi] && yi < H && (dy < 2 || bayer(xi, yi) < 0.55)) p.d[yi * W + xi] = dy === 0 ? st.crust[0] : st.ramp[2];
-        }
-      }
+      this.floorShades.push({ x, y, f });
     };
-    const ptop = top.slice(); // planting profile with reserved gaps for set pieces
+    const ptop = top.slice();
     const reserve = (x: number, hw: number) => {
       for (let k = Math.max(0, x - hw); k <= Math.min(W - 1, x + hw); k++) ptop[k] = -1;
     };
@@ -1702,7 +1978,6 @@ export class Ocean {
       return lo;
     };
     const chestX = Math.round(W * 0.62);
-    // black-smoker vent field
     const vents = this.bio.vent,
       rift = this.bio.riftia;
     for (let i = 0; i < 9; i++) {
@@ -1722,7 +1997,6 @@ export class Ocean {
         reserve(rx, 14);
       }
     }
-    // treasure chest
     const cb = lowest(chestX, 12);
     this.floorInsts.push({ s: this.bio.chest[0], x: chestX, y: O + cb, ph: 0, flip: false, hide: 0 });
     shade(chestX, cb, 14);
@@ -1736,8 +2010,31 @@ export class Ocean {
     const wtop = new Int16Array(W);
     for (let x = 0; x < W; x++) wtop[x] = top[x];
     for (let i = 0; i < 9; i++) this.crabs.push({ top: wtop, ox: 0, oy: O, x0: 200 + r() * (W - 400), range: 60 + r() * 80, sp: 0.12 + r() * 0.12, ph: r() * 6, v: (r() * 2) | 0 });
-    this.floor2d = paintFloor2d(top, W, H, st);
-    this.floor3d = paintFloor3d(top, W, H, st);
+
+    if (want3d) this.floor3d = paintFloor3d(top, W, H, st);
+    if (want2d || (want3d && !this.floor3d)) this.floor2d = paintFloor2d(top, W, H, st);
+    if (!wantPixel) {
+      yield;
+      return undefined;
+    }
+
+    const p = new Pix(W, H),
+      m = new Uint8Array(W * H);
+    for (let x = 0; x < W; x++) for (let y = top[x]; y < H; y++) m[y * W + x] = 1;
+    yield* paintRock(p, m, st, 77, 22);
+    yield;
+    const sp = [C("#62e8ff"), C("#f48af0"), C("#9c8cff")];
+    for (let x = 2; x < W - 2; x++) if (hash2(x, 9, 4) < 0.035) p.set(x, top[x] + 1 + ((hash2(x, 2, 4) * 3) | 0), sp[(hash2(x, 5, 4) * 3) | 0]);
+    for (const s of this.floorShades) {
+      for (let dx = -s.f - 2; dx <= s.f + 2; dx++) {
+        const xi = s.x + dx;
+        if (xi < 0 || xi >= W) continue;
+        for (let dy = 0; dy < 3; dy++) {
+          const yi = s.y + dy;
+          if (yi >= top[xi] && yi < H && (dy < 2 || bayer(xi, yi) < 0.55)) p.d[yi * W + xi] = dy === 0 ? st.crust[0] : st.ramp[2];
+        }
+      }
+    }
     return p.toCanvas();
   }
 
@@ -1911,6 +2208,7 @@ export class Ocean {
       ctx.imageSmoothingEnabled = sm;
       return;
     }
+    if (!this.water) return;
     ctx.imageSmoothingEnabled = false;
     const T = this.water,
       TW = T.width;
@@ -2142,8 +2440,8 @@ export class Ocean {
   } {
     const W = 520;
     const H = 260;
-    const BW = 460;
-    const BH = 230;
+    const BW = 300;
+    const BH = 150;
     if (!this.pelagicBuf) {
       this.pelagicBuf = document.createElement("canvas");
       this.pelagicBuf.width = W;
@@ -2171,27 +2469,26 @@ export class Ocean {
 
   /**
    * High-resolution multi-pass additive Kawase/Gaussian blur (zero downscale pixelation).
-   * Uses 4 energy-conserving 0.25-alpha taps per pass across high-res 460x230 ping-pong buffers.
+   * Uses 4 energy-conserving 0.25-alpha taps per pass across 300x150 ping-pong buffers.
    */
   private blurPelagic(passes: number): HTMLCanvasElement {
     const { buf, blurA, ac, blurB, b2c } = this.ensurePelagicScratch();
     const W = blurA.width;
     const H = blurA.height;
     const taps: [number, number][][] = [
-      [[-1.1, -1.1], [1.1, -1.1], [-1.1, 1.1], [1.1, 1.1]],
-      [[-1.9, 0], [1.9, 0], [0, -1.9], [0, 1.9]],
-      [[-2.6, -2.6], [2.6, -2.6], [-2.6, 2.6], [2.6, 2.6]],
-      [[-3.4, -1.4], [3.4, 1.4], [-1.4, 3.4], [1.4, -3.4]],
+      [[-1.2, -1.2], [1.2, -1.2], [-1.2, 1.2], [1.2, 1.2]],
+      [[-2.2, 0], [2.2, 0], [0, -2.2], [0, 2.2]],
     ];
+    const count = Math.min(2, passes);
     let src: HTMLCanvasElement = buf;
-    for (let p = 0; p < passes; p++) {
+    for (let p = 0; p < count; p++) {
       const dst = p % 2 === 0 ? blurA : blurB;
       const dc = p % 2 === 0 ? ac : b2c;
       dc.globalCompositeOperation = "source-over";
       dc.globalAlpha = 1;
       dc.clearRect(0, 0, W, H);
       dc.imageSmoothingEnabled = true;
-      dc.imageSmoothingQuality = "high";
+      dc.imageSmoothingQuality = "medium";
       dc.globalCompositeOperation = "lighter";
       dc.globalAlpha = 0.25;
       for (const [ox, oy] of taps[p % taps.length]) {
@@ -2424,7 +2721,7 @@ export class Ocean {
         ctx.globalAlpha = baseAlpha * (deepPass ? 0.34 : 0.32);
         const prevSm = ctx.imageSmoothingEnabled;
         ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
+        ctx.imageSmoothingQuality = "medium";
         ctx.drawImage(blurredWhale, -BW * 0.5, -BH * 0.48, BW, BH);
         ctx.imageSmoothingEnabled = prevSm;
         ctx.restore();
@@ -2570,7 +2867,7 @@ export class Ocean {
         ctx.globalAlpha = baseAlpha * (deepPass ? 0.56 : 0.48);
         const prevSm = ctx.imageSmoothingEnabled;
         ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
+        ctx.imageSmoothingQuality = "medium";
         ctx.drawImage(blurredSub, -BW * 0.40, -BH * 0.54, BW, BH);
         ctx.imageSmoothingEnabled = prevSm;
         ctx.restore();
@@ -2661,33 +2958,39 @@ export class Ocean {
       ctx.save();
 
       // Layer 0 (Ultra-Far 0.09x Parallax): Highest, smallest, pale cyan silhouettes softly blurred
-      ctx.globalAlpha = 0.56 * fade;
-      const yFar1 = this.sn(18 - camTop * 0.09);
-      this.tile(ctx, far1, camLeft * 0.09, yFar1, vw, vh);
+      if (far1) {
+        ctx.globalAlpha = 0.56 * fade;
+        const yFar1 = this.sn(18 - camTop * 0.09);
+        this.tile(ctx, far1, camLeft * 0.09, yFar1, vw, vh);
+      }
 
       ctx.globalAlpha = fade;
       this.drawDistantPelagics(ctx, camLeft, camTop, vw, vh, false);
 
       // Layer 1 (Far-Mid 0.20x Parallax): Soft teal canyon arches & simplified coral silhouettes
-      ctx.globalAlpha = 0.78 * fade;
-      const yFar2 = this.sn(64 - camTop * 0.2);
-      this.tile(ctx, far2, camLeft * 0.2, yFar2, vw, vh);
+      if (far2) {
+        ctx.globalAlpha = 0.78 * fade;
+        const yFar2 = this.sn(64 - camTop * 0.2);
+        this.tile(ctx, far2, camLeft * 0.2, yFar2, vw, vh);
+      }
 
       ctx.globalAlpha = fade;
       this.drawSchools(ctx, camLeft, camTop, vw, vh, 0.32, false);
       this.drawLight(ctx, 2, camLeft, camTop, vw, vh, t);
 
       // Layer 2 (Midground 0.42x Parallax): Deeper oceanic blue cliffs & animated silhouetted sea fans
-      ctx.globalAlpha = 0.94 * fade;
-      const y3 = this.sn(126 - camTop * 0.42);
-      const W3 = far3.width;
-      const off = this.tile(ctx, far3, camLeft * 0.42, y3, vw, vh);
-      if (y3 < vh && y3 + 320 > -130) {
-        for (const b of this.farInsts) {
-          let sx = (((b.x - off) % W3) + W3) % W3;
-          if (sx > vw + 60) sx -= W3;
-          if (sx < -60 || sx > vw + 60) continue;
-          this.drawInst(ctx, b, sx, y3 + b.y, t);
+      if (far3) {
+        ctx.globalAlpha = 0.94 * fade;
+        const y3 = this.sn(126 - camTop * 0.42);
+        const W3 = far3.width;
+        const off = this.tile(ctx, far3, camLeft * 0.42, y3, vw, vh);
+        if (y3 < vh && y3 + 320 > -130) {
+          for (const b of this.farInsts) {
+            let sx = (((b.x - off) % W3) + W3) % W3;
+            if (sx > vw + 60) sx -= W3;
+            if (sx < -60 || sx > vw + 60) continue;
+            this.drawInst(ctx, b, sx, y3 + b.y, t);
+          }
         }
       }
       ctx.globalAlpha = fade;
@@ -2714,24 +3017,28 @@ export class Ocean {
             if (x1 - x0 > 2) ctx.drawImage(this.neb, x0 / 2, y0 / 2, (x1 - x0) / 2, (y1 - y0) / 2, dx + x0, ny + y0, x1 - x0, y1 - y0);
           }
       }
-      ctx.globalAlpha = alpha * 0.5;
-      this.tile(ctx, deep1, camLeft * 0.24, D1_Y - camTop, vw, vh);
+      if (deep1) {
+        ctx.globalAlpha = alpha * 0.5;
+        this.tile(ctx, deep1, camLeft * 0.24, D1_Y - camTop, vw, vh);
+      }
       ctx.globalAlpha = alpha;
       this.drawDistantPelagics(ctx, camLeft, camTop, vw, vh, true);
       this.drawSchools(ctx, camLeft, camTop, vw, vh, 0.32, true);
-      ctx.globalAlpha = alpha * 0.86;
-      const off = this.tile(ctx, deep2, camLeft * 0.48, D2_Y - camTop, vw, vh);
-      ctx.globalCompositeOperation = "lighter";
-      const W2 = deep2.width;
-      for (const g of this.deepGlows) {
-        let sx = (((g.x - off) % W2) + W2) % W2;
-        if (sx > vw + 60) sx -= W2;
-        const sy = D2_Y + g.y - camTop;
-        if (sx < -60 || sx > vw + 60 || sy < -60 || sy > vh + 60) continue;
-        ctx.globalAlpha = alpha * (0.4 + 0.35 * Math.sin(t * 1.6 + g.ph));
-        ctx.drawImage(glowOrb(g.c, false), sx - 34, sy - 34, 68, 68);
+      if (deep2) {
+        ctx.globalAlpha = alpha * 0.86;
+        const off = this.tile(ctx, deep2, camLeft * 0.48, D2_Y - camTop, vw, vh);
+        ctx.globalCompositeOperation = "lighter";
+        const W2 = deep2.width;
+        for (const g of this.deepGlows) {
+          let sx = (((g.x - off) % W2) + W2) % W2;
+          if (sx > vw + 60) sx -= W2;
+          const sy = D2_Y + g.y - camTop;
+          if (sx < -60 || sx > vw + 60 || sy < -60 || sy > vh + 60) continue;
+          ctx.globalAlpha = alpha * (0.4 + 0.35 * Math.sin(t * 1.6 + g.ph));
+          ctx.drawImage(glowOrb(g.c, false), sx - 34, sy - 34, 68, 68);
+        }
+        ctx.globalCompositeOperation = "source-over";
       }
-      ctx.globalCompositeOperation = "source-over";
       ctx.globalAlpha = alpha;
       this.drawSchools(ctx, camLeft, camTop, vw, vh, 0.58, true);
       ctx.restore();
@@ -2809,13 +3116,13 @@ export class Ocean {
     for (const f of this.formations) {
       const sx = f.colX - cl,
         sy = f.colY - ct;
-      if (sx + f.col.width < 0 || sx > vw || sy + f.col.height < 0 || sy > vh) continue;
+      if (sx + f.colW < 0 || sx > vw || sy + f.colH < 0 || sy > vh) continue;
       const colCv = !this.pixelMode && this.reef3D && f.col3d
         ? f.col3d
         : !this.pixelMode && f.col2d
           ? f.col2d
           : f.col;
-      this.spr(ctx, colCv, sx, sy, false, f.col.width, f.col.height);
+      this.spr(ctx, colCv, sx, sy, false, f.colW, f.colH);
     }
     // ... then the collidable crowns with their living reef + 3D overhang shadows
     const vis: Formation[] = [];
@@ -2927,7 +3234,8 @@ export class Ocean {
     if (FLOOR_TOP - ct > vh) return;
     const use3d = !this.pixelMode && this.reef3D && !!this.floor3d;
     const use2d = !this.pixelMode && !use3d && !!this.floor2d;
-    const F = use3d ? this.floor3d! : use2d ? this.floor2d : this.floor;
+    const F = use3d ? this.floor3d! : use2d ? this.floor2d! : this.floor;
+    if (!F) return;
     const sx = Math.max(0, cl),
       sw = Math.min(F.width - sx, vw + 2);
     const sy = Math.max(0, ct - FLOOR_TOP),

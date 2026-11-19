@@ -8,6 +8,8 @@ import type { Fish3DRig } from "../game/fish3d";
 interface Props {
   species: Species;
   onBiteCount?: number;
+  paused?: boolean;
+  interactive?: boolean;
 }
 
 function heroCameraZ(sp: Species): number {
@@ -19,7 +21,7 @@ function heroCameraZ(sp: Species): number {
   return 1.24;
 }
 
-export default function Fish3DViewport({ species, onBiteCount = 0 }: Props) {
+export default function Fish3DViewport({ species, onBiteCount = 0, paused = false, interactive = true }: Props) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const manualChompRef = useRef(0);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -29,6 +31,8 @@ export default function Fish3DViewport({ species, onBiteCount = 0 }: Props) {
   const rigKeyRef = useRef<string>("");
   const speciesRef = useRef(species);
   speciesRef.current = species;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
 
   const [webglError, setWebglError] = useState(false);
 
@@ -82,7 +86,7 @@ export default function Fish3DViewport({ species, onBiteCount = 0 }: Props) {
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.setClearColor(0x000000, 0);
-    renderer.setPixelRatio(soft ? 1 : Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(soft ? 1 : Math.min(window.devicePixelRatio || 1, 1.5));
 
     const canvas = renderer.domElement;
     canvas.style.width = "100%";
@@ -96,12 +100,13 @@ export default function Fish3DViewport({ species, onBiteCount = 0 }: Props) {
     const pmrem = new THREE.PMREMGenerator(renderer);
     const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
     scene.environment = envRT.texture;
+    scene.environmentIntensity = 0.24;
     pmrem.dispose();
 
-    const hemi = new THREE.HemisphereLight(0xe4f9ff, 0x2d6bb8, 1.35);
-    const key = new THREE.DirectionalLight(0xffffff, 1.55);
+    const hemi = new THREE.HemisphereLight(0xe4f9ff, 0x2d6bb8, 1.08);
+    const key = new THREE.DirectionalLight(0xffffff, 1.02);
     key.position.set(1.5, 2.5, 3.6);
-    const rim = new THREE.DirectionalLight(0x52d6ff, 0.95);
+    const rim = new THREE.DirectionalLight(0x52d6ff, 0.55);
     rim.position.set(-2.0, 0.9, -2.2);
     scene.add(hemi, key, rim);
 
@@ -180,9 +185,11 @@ export default function Fish3DViewport({ species, onBiteCount = 0 }: Props) {
       contextLost = false;
     };
 
-    canvas.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
+    if (interactive) {
+      canvas.addEventListener("pointerdown", onPointerDown);
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+    }
     canvas.addEventListener("webglcontextlost", onContextLost);
     canvas.addEventListener("webglcontextrestored", onContextRestored);
 
@@ -213,6 +220,15 @@ export default function Fish3DViewport({ species, onBiteCount = 0 }: Props) {
 
     function tick(now = performance.now()) {
       if (disposed) return;
+      if (pausedRef.current || document.hidden) {
+        lastNow = now;
+        if (soft) {
+          frameId = window.setTimeout(() => tick(), 120);
+        } else {
+          frameId = requestAnimationFrame(tick);
+        }
+        return;
+      }
       const dt = Math.min(0.05, Math.max(0.001, (now - lastNow) / 1000));
       lastNow = now;
       elapsed += dt;
@@ -332,9 +348,11 @@ export default function Fish3DViewport({ species, onBiteCount = 0 }: Props) {
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
       ro?.disconnect();
-      canvas.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
+      if (interactive) {
+        canvas.removeEventListener("pointerdown", onPointerDown);
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+      }
       canvas.removeEventListener("webglcontextlost", onContextLost);
       canvas.removeEventListener("webglcontextrestored", onContextRestored);
       if (rigRef.current) {
@@ -347,11 +365,11 @@ export default function Fish3DViewport({ species, onBiteCount = 0 }: Props) {
       envRT.dispose();
       renderer.dispose();
     };
-  }, []);
+  }, [interactive]);
 
   if (webglError) {
     return (
-      <div className="w-[224px] h-[124px] flex items-center justify-center text-xs font-bold text-cyan-100">
+      <div className="w-full h-full flex items-center justify-center text-xs font-bold text-cyan-100">
         Pratinjau 3D aktif saat bermain
       </div>
     );
@@ -361,8 +379,8 @@ export default function Fish3DViewport({ species, onBiteCount = 0 }: Props) {
     <div
       ref={mountRef}
       aria-label={`${species.name} 3D Interaktif`}
-      title="Seret untuk putar 3D · Klik untuk tes animasi makan"
-      className="w-[224px] h-[124px] cursor-grab active:cursor-grabbing select-none"
+      title={interactive ? "Seret untuk putar 3D · Klik untuk tes animasi makan" : undefined}
+      className={`w-full h-full select-none ${interactive ? "cursor-grab active:cursor-grabbing" : "pointer-events-none"}`}
     />
   );
 }

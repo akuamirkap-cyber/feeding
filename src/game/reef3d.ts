@@ -13,6 +13,7 @@ import type { Bio, BioSet } from "./reef";
 import { sampleCaveBounds } from "./reef2d";
 import type { RockPal2d, CaveSpec2d } from "./reef2d";
 import { rng, hash2 } from "./pixel";
+import { isSoftwareWebGL } from "./fish3d";
 
 type Pal = number[];
 const TAU = Math.PI * 2;
@@ -40,6 +41,19 @@ interface PooledRenderer {
 
 let _pool: PooledRenderer | null = null;
 let _poolFailed = false;
+const _matCache = new Map<string, THREE.MeshStandardMaterial>();
+
+function cachedStdMat(
+  key: string,
+  params: THREE.MeshStandardMaterialParameters
+): THREE.MeshStandardMaterial {
+  let m = _matCache.get(key);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial(params);
+    _matCache.set(key, m);
+  }
+  return m;
+}
 
 function getPool(): PooledRenderer | null {
   if (_pool) return _pool;
@@ -47,7 +61,7 @@ function getPool(): PooledRenderer | null {
   try {
     const renderer = new THREE.WebGLRenderer({
       alpha: true,
-      antialias: true,
+      antialias: !isSoftwareWebGL(),
       preserveDrawingBuffer: true,
       powerPreference: "high-performance",
     });
@@ -66,6 +80,14 @@ function getPool(): PooledRenderer | null {
 }
 
 export function disposeReef3DRenderer() {
+  _matCache.forEach((m) => {
+    try {
+      m.dispose();
+    } catch {
+      /* ignore */
+    }
+  });
+  _matCache.clear();
   if (!_pool) return;
   try {
     _pool.envTex.dispose();
@@ -89,16 +111,10 @@ function copyRendererToCanvas(pxW: number, pxH: number): HTMLCanvasElement {
 }
 
 function disposeGroup(root: THREE.Object3D) {
-  const mats = new Set<THREE.Material>();
   root.traverse((obj) => {
     const m = obj as THREE.Mesh;
     if (m.geometry) m.geometry.dispose();
-    if (m.material) {
-      if (Array.isArray(m.material)) m.material.forEach((mt) => mats.add(mt));
-      else mats.add(m.material);
-    }
   });
-  mats.forEach((mt) => mt.dispose());
 }
 
 function createUnderwaterScene(ambientInt = 1.05, keyInt = 1.85, rimInt = 0.95): THREE.Scene {
@@ -152,20 +168,28 @@ function renderSceneOrtho(
 // ============================================================================
 // MATERIAL & MESH HELPERS FOR 3D CORALS & BIOTA
 // ============================================================================
-function stdMat(col: THREE.Color, roughness = 0.44, metalness = 0.04, emissive?: THREE.Color, emissiveInt = 0, clearcoat = 0.15): THREE.MeshPhysicalMaterial {
-  return new THREE.MeshPhysicalMaterial({
+function stdMat(
+  col: THREE.Color,
+  roughness = 0.44,
+  metalness = 0.04,
+  emissive?: THREE.Color,
+  emissiveInt = 0,
+  clearcoat = 0.15
+): THREE.MeshStandardMaterial {
+  const effRough = Math.max(0.1, roughness - clearcoat * 0.25);
+  const emHex = emissive ? emissive.getHexString() : "000000";
+  const key = `std|${col.getHexString()}|${effRough.toFixed(2)}|${metalness.toFixed(2)}|${emHex}|${emissiveInt.toFixed(2)}`;
+  return cachedStdMat(key, {
     color: col,
-    roughness,
+    roughness: effRough,
     metalness,
     emissive: emissive ?? new THREE.Color(0x000000),
     emissiveIntensity: emissiveInt,
-    clearcoat,
-    clearcoatRoughness: 0.35,
     side: THREE.DoubleSide,
   });
 }
 
-function palMat(pal: Pal, idx = 2, roughness = 0.44, glow = false, clearcoat = 0.16): THREE.MeshPhysicalMaterial {
+function palMat(pal: Pal, idx = 2, roughness = 0.44, glow = false, clearcoat = 0.16): THREE.MeshStandardMaterial {
   const c = abgrToColor(pal[idx], 1.04);
   const em = glow ? abgrToColor(pal[Math.min(4, idx + 1)]) : undefined;
   return stdMat(c, roughness, 0.04, em, glow ? 0.32 : 0, clearcoat);
@@ -176,7 +200,7 @@ function renderBioGroup(
   h: number,
   build: (root: THREE.Group) => void,
   camTilt = 0.12,
-  scale = 2.5
+  scale = isSoftwareWebGL() ? 1.5 : 2.0
 ): HTMLCanvasElement {
   const scene = createUnderwaterScene(1.12, 1.95, 1.0);
   const root = new THREE.Group();
@@ -336,12 +360,12 @@ function buildBrain3d(root: THREE.Group, seed: number, pal: Pal, w: number, h: n
   }
   geo.setAttribute("color", new THREE.BufferAttribute(cols, 3));
   geo.computeVertexNormals();
-  const mat = new THREE.MeshPhysicalMaterial({
+  const emCol = abgrToColor(pal[2]);
+  const mat = cachedStdMat(`brain|${emCol.getHexString()}`, {
     vertexColors: true,
-    roughness: 0.38,
+    roughness: 0.32,
     metalness: 0.04,
-    clearcoat: 0.25,
-    emissive: abgrToColor(pal[2]),
+    emissive: emCol,
     emissiveIntensity: 0.12,
   });
   const dome = new THREE.Mesh(geo, mat);
@@ -559,11 +583,10 @@ function buildClam3d(root: THREE.Group, shellPal: Pal, mantlePal: Pal, ph: numbe
   const openAmt = hide > 0 ? Math.max(0.05, 1 - hide * 0.92) : 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(ph * TAU));
   const shellMat = palMat(shellPal, 3, 0.38, false, 0.28);
   const mantleMat = palMat(mantlePal, 3, 0.25, true, 0.45);
-  const pearlMat = new THREE.MeshPhysicalMaterial({
+  const pearlMat = cachedStdMat("clamPearl", {
     color: 0xf8fcff,
     roughness: 0.08,
     metalness: 0.05,
-    clearcoat: 1.0,
     emissive: new THREE.Color(0x9be8ff),
     emissiveIntensity: 0.28,
   });
@@ -759,13 +782,14 @@ function buildVine3d(root: THREE.Group, seed: number, pal: Pal, _w: number, h: n
 function buildCrystal3d(root: THREE.Group, seed: number, pal: Pal, w: number, h: number) {
   const r = rng(seed);
   const by = -h * 0.5 + 1.5;
-  const mat = new THREE.MeshPhysicalMaterial({
-    color: abgrToColor(pal[3], 1.15),
-    emissive: abgrToColor(pal[4]),
+  const col = abgrToColor(pal[3], 1.15);
+  const em = abgrToColor(pal[4]);
+  const mat = cachedStdMat(`crys|${col.getHexString()}|${em.getHexString()}`, {
+    color: col,
+    emissive: em,
     emissiveIntensity: 0.48,
-    roughness: 0.12,
+    roughness: 0.08,
     metalness: 0.1,
-    clearcoat: 1.0,
     flatShading: true,
     transparent: true,
     opacity: 0.94,
@@ -837,11 +861,13 @@ function buildVent3d(root: THREE.Group, _seed: number, ph: number, w: number, h:
   const by = -h * 0.5 + 1;
   const basalt = PAL.basalt;
   const ember = PAL.ember;
-  const rockMat = new THREE.MeshStandardMaterial({ color: abgrToColor(basalt[2]), roughness: 0.78, flatShading: true });
-  const rimMat = new THREE.MeshStandardMaterial({
+  const rockCol = abgrToColor(basalt[2]);
+  const rockMat = cachedStdMat(`ventRock|${rockCol.getHexString()}`, { color: rockCol, roughness: 0.78, flatShading: true });
+  const rimEmInt = 0.95 + Math.sin(ph * TAU * 2) * 0.35;
+  const rimMat = cachedStdMat(`ventRim|${rimEmInt.toFixed(2)}`, {
     color: abgrToColor(ember[3]),
     emissive: abgrToColor(ember[2]),
-    emissiveIntensity: 0.95 + Math.sin(ph * TAU * 2) * 0.35,
+    emissiveIntensity: rimEmInt,
     roughness: 0.3,
   });
 
@@ -869,7 +895,7 @@ function buildVent3d(root: THREE.Group, _seed: number, ph: number, w: number, h:
   }
 
   // Rising 3D hydrothermal plume & crisp glowing bubbles
-  const plumeMat = new THREE.MeshPhysicalMaterial({
+  const plumeMat = cachedStdMat("ventPlume", {
     color: 0xdcfaff,
     emissive: 0x6ce8ff,
     emissiveIntensity: 0.38,
@@ -891,20 +917,18 @@ function buildVent3d(root: THREE.Group, _seed: number, ph: number, w: number, h:
 function buildChest3d(root: THREE.Group, ph: number, _w: number, h: number) {
   const by = -h * 0.5 + 3;
   const woodMat = palMat(PAL.wood, 2, 0.58);
-  const goldMat = new THREE.MeshPhysicalMaterial({
+  const goldMat = cachedStdMat("chestGold", {
     color: abgrToColor(PAL.gold[3], 1.1),
     emissive: abgrToColor(PAL.gold[2]),
     emissiveIntensity: 0.22,
-    roughness: 0.22,
+    roughness: 0.14,
     metalness: 0.82,
-    clearcoat: 0.5,
   });
-  const pearlMat = new THREE.MeshPhysicalMaterial({
+  const pearlMat = cachedStdMat("chestPearl", {
     color: 0xffffff,
     emissive: 0x99ecff,
     emissiveIntensity: 0.35,
     roughness: 0.08,
-    clearcoat: 1.0,
   });
 
   const box = new THREE.Mesh(new THREE.BoxGeometry(22, 11, 14), woodMat);
@@ -942,12 +966,13 @@ function buildJelly3d(root: THREE.Group, seed: number, pal: Pal, ph: number, ten
   const bellR = w * (0.34 - pulse * 0.045);
   const bellH = bellR * (0.72 + pulse * 0.14);
   const bellY = h * 0.22 + pulse * 2.2;
-  const bellMat = new THREE.MeshPhysicalMaterial({
-    color: abgrToColor(pal[3], 1.1),
-    emissive: abgrToColor(pal[4]),
+  const bellCol = abgrToColor(pal[3], 1.1);
+  const bellEm = abgrToColor(pal[4]);
+  const bellMat = cachedStdMat(`jellyBell|${bellCol.getHexString()}|${bellEm.getHexString()}`, {
+    color: bellCol,
+    emissive: bellEm,
     emissiveIntensity: 0.42,
-    roughness: 0.15,
-    clearcoat: 0.9,
+    roughness: 0.1,
     transparent: true,
     opacity: 0.86,
   });
@@ -978,8 +1003,8 @@ function buildCrab3d(root: THREE.Group, pal: Pal, ph: number, _w: number, h: num
   const by = -h * 0.5 + 3;
   const shellMat = palMat(pal, 3, 0.32, false, 0.35);
   const legMat = palMat(pal, 2, 0.45);
-  const eyeWhite = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2 });
-  const pupil = new THREE.MeshStandardMaterial({ color: 0x0b1020, roughness: 0.1 });
+  const eyeWhite = cachedStdMat("crabEyeW", { color: 0xffffff, roughness: 0.2 });
+  const pupil = cachedStdMat("crabPupil", { color: 0x0b1020, roughness: 0.1 });
 
   const body = new THREE.Mesh(new THREE.SphereGeometry(4.2, 14, 10), shellMat);
   body.scale.set(1.25, 0.65, 0.95);
@@ -1012,90 +1037,93 @@ function buildCrab3d(root: THREE.Group, pal: Pal, ph: number, _w: number, h: num
 export function* attach3dBiotaGen(out: BioSet, tint?: [number, number]): Generator<void, void, void> {
   if (!getPool()) return; // fallback cleanly to 2D if WebGL unavailable
   const L = PAL;
+  const bioScale = isSoftwareWebGL() ? 1.5 : 2.0;
   const make = (w: number, h: number, tilt: number, fn: (root: THREE.Group) => void): HTMLCanvasElement => {
-    const cv = renderBioGroup(w, h, fn, tilt, 2.5);
+    const cv = renderBioGroup(w, h, fn, tilt, bioScale);
     return tint ? tintCv(cv, tint[0], tint[1]) : cv;
   };
-  const set1 = (list: Bio[] | undefined, tilt: number, fn: (root: THREE.Group, b: Bio, idx: number) => void): boolean => {
+  const set1 = (list: Bio[] | undefined, anim: Bio["anim"], tilt: number, fn: (root: THREE.Group, b: Bio, idx: number) => void): boolean => {
     if (!list) return false;
     list.forEach((b, i) => {
       b.f3d = [make(b.w, b.h, tilt, (root) => fn(root, b, i))];
+      b.anim = anim;
     });
     return true;
   };
-  const setFrames = (
+  function* setFrames(
     list: Bio[] | undefined,
     nFrames: number,
     tilt: number,
     fn: (root: THREE.Group, b: Bio, idx: number, ph: number) => void,
     shyFn?: (root: THREE.Group, b: Bio, idx: number, hide: number) => void
-  ): boolean => {
-    if (!list) return false;
-    list.forEach((b, i) => {
-      b.f3d = Array.from({ length: nFrames }, (_, f) => make(b.w, b.h, tilt, (root) => fn(root, b, i, f / nFrames)));
+  ): Generator<void, void, void> {
+    if (!list) return;
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i];
+      const frames: HTMLCanvasElement[] = [];
+      for (let f = 0; f < nFrames; f++) {
+        frames.push(make(b.w, b.h, tilt, (root) => fn(root, b, i, f / nFrames)));
+        if ((f & 3) === 3 && f + 1 < nFrames) yield;
+      }
+      b.f3d = frames;
       if (shyFn) {
         b.shy3d = [
           make(b.w, b.h, tilt, (root) => shyFn(root, b, i, 0.58)),
           make(b.w, b.h, tilt, (root) => shyFn(root, b, i, 1)),
         ];
       }
-    });
-    return true;
-  };
+      b.anim = "frames";
+      yield;
+    }
+  }
 
-  if (set1(out.staghorn, 0.14, (r, b, i) => buildBranch3d(r, 11 + i * 7, [L.coral, L.orange, L.blue, L.yellow, L.pink][i], b.w, b.h, 14 + (i % 3), 3.6, 3))) yield;
-  if (set1(out.table, 0.24, (r, b, i) => buildTable3d(r, 31 + i * 5, [L.teal, L.purple, L.yellow, L.pink][i], b.w, b.h))) yield;
-  if (set1(out.brain, 0.22, (r, b, i) => buildBrain3d(r, 51 + i * 3, [L.yellow, L.green, L.orange][i], b.w, b.h))) yield;
-  if (set1(out.pillar, 0.14, (r, b, i) => buildPillar3d(r, 61 + i * 9, [L.yellow, L.lime, L.pink][i], b.w, b.h))) yield;
-  if (set1(out.lettuce, 0.22, (r, b, i) => buildLettuce3d(r, 71 + i * 3, [L.green, L.purple, L.orange][i], b.w, b.h))) yield;
-  if (set1(out.fan, 0.12, (r, b, i) => buildFan3d(r, 81 + i * 11, [L.purple, L.pink, L.red, L.orange][i], b.w, b.h))) yield;
-  if (set1(out.whip, 0.12, (r, b, i) => buildWhip3d(r, 91 + i * 5, [L.orange, L.red, L.yellow][i], b.w, b.h))) yield;
-  if (set1(out.tubes, 0.24, (r, b, i) => buildTubes3d(r, 101 + i * 7, [L.yellow, L.purple, L.orange, L.blue][i], b.w, b.h))) yield;
-  if (set1(out.barrel, 0.26, (r, b, i) => buildTubes3d(r, 111 + i, [L.red, L.pink][i], b.w, b.h, true))) yield;
+  if (set1(out.staghorn, "shimmer", 0.14, (r, b, i) => buildBranch3d(r, 11 + i * 7, [L.coral, L.orange, L.blue, L.yellow, L.pink][i], b.w, b.h, 14 + (i % 3), 3.6, 3))) yield;
+  if (set1(out.table, "pulse", 0.24, (r, b, i) => buildTable3d(r, 31 + i * 5, [L.teal, L.purple, L.yellow, L.pink][i], b.w, b.h))) yield;
+  if (set1(out.brain, "shimmer", 0.22, (r, b, i) => buildBrain3d(r, 51 + i * 3, [L.yellow, L.green, L.orange][i], b.w, b.h))) yield;
+  if (set1(out.pillar, "shimmer", 0.14, (r, b, i) => buildPillar3d(r, 61 + i * 9, [L.yellow, L.lime, L.pink][i], b.w, b.h))) yield;
+  if (set1(out.lettuce, "shimmer", 0.22, (r, b, i) => buildLettuce3d(r, 71 + i * 3, [L.green, L.purple, L.orange][i], b.w, b.h))) yield;
+  if (set1(out.fan, "sway", 0.12, (r, b, i) => buildFan3d(r, 81 + i * 11, [L.purple, L.pink, L.red, L.orange][i], b.w, b.h))) yield;
+  if (set1(out.whip, "sway", 0.12, (r, b, i) => buildWhip3d(r, 91 + i * 5, [L.orange, L.red, L.yellow][i], b.w, b.h))) yield;
+  if (set1(out.tubes, "pulse", 0.24, (r, b, i) => buildTubes3d(r, 101 + i * 7, [L.yellow, L.purple, L.orange, L.blue][i], b.w, b.h))) yield;
+  if (set1(out.barrel, "pulse", 0.26, (r, b, i) => buildTubes3d(r, 111 + i, [L.red, L.pink][i], b.w, b.h, true))) yield;
   if (
-    set1(out.anemone, 0.18, (r, b, i) => {
+    set1(out.anemone, "pulse", 0.18, (r, b, i) => {
       const pairs: [Pal, number][] = [[L.pink, L.bone[4]], [L.green, L.pink[3]], [L.orange, L.bone[4]], [L.purple, L.yellow[3]]];
       const [pl, tp] = pairs[i];
       buildAnemone3d(r, 121 + i * 3, pl, tp, b.w, b.h, 15);
     })
   )
     yield;
-  if (
-    setFrames(
-      out.clam,
-      8,
-      0.24,
-      (r, b, i, ph) => buildClam3d(r, L.bone, [L.blue, L.purple, L.teal, L.green][i], ph, 0, b.w, b.h),
-      (r, b, i, hide) => buildClam3d(r, L.bone, [L.blue, L.purple, L.teal, L.green][i], 0, hide, b.w, b.h)
-    )
-  )
-    yield;
-  if (
-    setFrames(
-      out.worm,
-      4,
-      0.18,
-      (r, b, i, ph) => buildWorm3d(r, 131 + i * 7, [L.red, L.yellow, L.blue, L.pink, L.orange][i], L.bone, ph, 0, b.w, b.h),
-      (r, b, i, hide) => buildWorm3d(r, 131 + i * 7, [L.red, L.yellow, L.blue, L.pink, L.orange][i], L.bone, 0, hide, b.w, b.h)
-    )
-  )
-    yield;
-  if (set1(out.grass, 0.12, (r, b, i) => buildWhip3d(r, 141 + i, [L.green, L.kelp, L.lime][i], b.w, b.h))) yield;
-  if (set1(out.kelp, 0.1, (r, b, i) => buildKelp3d(r, 151 + i * 3, [L.kelp, L.olive, L.kelp][i], b.w, b.h, 3))) yield;
-  if (set1(out.kelpBig, 0.08, (r, b, i) => buildKelp3d(r, 191 + i * 3, [L.kelp, L.olive][i], b.w, b.h, 4))) yield;
-  if (set1(out.urchin, 0.18, (r, b, i) => buildUrchin3d(r, 161 + i, [L.dark, L.red, L.purple][i], b.w, b.h))) yield;
-  if (set1(out.star, 0.1, (r, b, i) => buildStar3d(r, [L.orange, L.red, L.blue][i], b.w, b.h))) yield;
-  if (set1(out.shelf, 0.18, (r, b, i) => buildShelf3d(r, 171 + i * 3, [L.pink, L.teal, L.orange][i], b.w, b.h))) yield;
-  if (set1(out.vine, -0.1, (r, b, i) => buildVine3d(r, 181 + i * 3, [L.kelp, L.green][i], b.w, b.h, false))) yield;
+  yield* setFrames(
+    out.clam,
+    8,
+    0.24,
+    (r, b, i, ph) => buildClam3d(r, L.bone, [L.blue, L.purple, L.teal, L.green][i], ph, 0, b.w, b.h),
+    (r, b, i, hide) => buildClam3d(r, L.bone, [L.blue, L.purple, L.teal, L.green][i], 0, hide, b.w, b.h)
+  );
+  yield* setFrames(
+    out.worm,
+    4,
+    0.18,
+    (r, b, i, ph) => buildWorm3d(r, 131 + i * 7, [L.red, L.yellow, L.blue, L.pink, L.orange][i], L.bone, ph, 0, b.w, b.h),
+    (r, b, i, hide) => buildWorm3d(r, 131 + i * 7, [L.red, L.yellow, L.blue, L.pink, L.orange][i], L.bone, 0, hide, b.w, b.h)
+  );
+  if (set1(out.grass, "sway", 0.12, (r, b, i) => buildWhip3d(r, 141 + i, [L.green, L.kelp, L.lime][i], b.w, b.h))) yield;
+  if (set1(out.kelp, "sway", 0.1, (r, b, i) => buildKelp3d(r, 151 + i * 3, [L.kelp, L.olive, L.kelp][i], b.w, b.h, 3))) yield;
+  if (set1(out.kelpBig, "sway", 0.08, (r, b, i) => buildKelp3d(r, 191 + i * 3, [L.kelp, L.olive][i], b.w, b.h, 4))) yield;
+  if (set1(out.urchin, "pulse", 0.18, (r, b, i) => buildUrchin3d(r, 161 + i, [L.dark, L.red, L.purple][i], b.w, b.h))) yield;
+  if (set1(out.star, "shimmer", 0.1, (r, b, i) => buildStar3d(r, [L.orange, L.red, L.blue][i], b.w, b.h))) yield;
+  if (set1(out.shelf, "shimmer", 0.18, (r, b, i) => buildShelf3d(r, 171 + i * 3, [L.pink, L.teal, L.orange][i], b.w, b.h))) yield;
+  if (set1(out.vine, "sway", -0.1, (r, b, i) => buildVine3d(r, 181 + i * 3, [L.kelp, L.green][i], b.w, b.h, false))) yield;
 
-  if (set1(out.staghorn2, 0.14, (r, b, i) => buildBranch3d(r, 211 + i * 7, [L.purple, L.indigo, L.teal][i], b.w, b.h, 15, 3.6, 3))) yield;
-  if (set1(out.brain2, 0.22, (r, b, i) => buildBrain3d(r, 221 + i * 3, [L.purple, L.indigo][i], b.w, b.h))) yield;
-  if (set1(out.lettuce2, 0.22, (r, b, i) => buildLettuce3d(r, 231 + i * 3, [L.indigo, L.teal][i], b.w, b.h))) yield;
-  if (set1(out.fan2, 0.12, (r, b, i) => buildFan3d(r, 241 + i * 11, [L.indigo, L.magenta, L.blue][i], b.w, b.h))) yield;
-  if (set1(out.whip2, 0.12, (r, b, i) => buildWhip3d(r, 251 + i * 5, [L.purple, L.teal][i], b.w, b.h))) yield;
-  if (set1(out.barrel2, 0.26, (r, b, i) => buildTubes3d(r, 261 + i, [L.indigo, L.purple][i], b.w, b.h, true))) yield;
+  if (set1(out.staghorn2, "shimmer", 0.14, (r, b, i) => buildBranch3d(r, 211 + i * 7, [L.purple, L.indigo, L.teal][i], b.w, b.h, 15, 3.6, 3))) yield;
+  if (set1(out.brain2, "shimmer", 0.22, (r, b, i) => buildBrain3d(r, 221 + i * 3, [L.purple, L.indigo][i], b.w, b.h))) yield;
+  if (set1(out.lettuce2, "shimmer", 0.22, (r, b, i) => buildLettuce3d(r, 231 + i * 3, [L.indigo, L.teal][i], b.w, b.h))) yield;
+  if (set1(out.fan2, "sway", 0.12, (r, b, i) => buildFan3d(r, 241 + i * 11, [L.indigo, L.magenta, L.blue][i], b.w, b.h))) yield;
+  if (set1(out.whip2, "sway", 0.12, (r, b, i) => buildWhip3d(r, 251 + i * 5, [L.purple, L.teal][i], b.w, b.h))) yield;
+  if (set1(out.barrel2, "pulse", 0.26, (r, b, i) => buildTubes3d(r, 261 + i, [L.indigo, L.purple][i], b.w, b.h, true))) yield;
   if (
-    set1(out.anemone2, 0.18, (r, b, i) => {
+    set1(out.anemone2, "pulse", 0.18, (r, b, i) => {
       const pairs: [Pal, number][] = [[L.magenta, L.cyan[3]], [L.cyan, L.bone[4]]];
       const [pl, tp] = pairs[i];
       buildAnemone3d(r, 271 + i * 3, pl, tp, b.w, b.h, 15);
@@ -1103,46 +1131,58 @@ export function* attach3dBiotaGen(out: BioSet, tint?: [number, number]): Generat
   )
     yield;
   if (
-    set1(out.crinoid, 0.18, (r, b, i) => {
+    set1(out.crinoid, "pulse", 0.18, (r, b, i) => {
       const pairs: [Pal, number][] = [[L.yellow, L.orange[4]], [L.red, L.yellow[3]], [L.orange, L.bone[4]]];
       const [pl, tp] = pairs[i];
       buildAnemone3d(r, 281 + i * 3, pl, tp, b.w, b.h, 18, true);
     })
   )
     yield;
-  if (set1(out.tunicate, 0.18, (r, b, i) => buildTunicate3d(r, 291 + i * 3, [L.blue, L.cyan, L.purple][i], b.w, b.h))) yield;
-  if (set1(out.shelf2, 0.18, (r, b, i) => buildShelf3d(r, 301 + i * 3, [L.purple, L.indigo, L.cyan][i], b.w, b.h))) yield;
-  if (set1(out.vine2, -0.1, (r, b, i) => buildVine3d(r, 311 + i * 3, [L.cyan, L.magenta][i], b.w, b.h, true))) yield;
+  if (set1(out.tunicate, "pulse", 0.18, (r, b, i) => buildTunicate3d(r, 291 + i * 3, [L.blue, L.cyan, L.purple][i], b.w, b.h))) yield;
+  if (set1(out.shelf2, "shimmer", 0.18, (r, b, i) => buildShelf3d(r, 301 + i * 3, [L.purple, L.indigo, L.cyan][i], b.w, b.h))) yield;
+  if (set1(out.vine2, "sway", -0.1, (r, b, i) => buildVine3d(r, 311 + i * 3, [L.cyan, L.magenta][i], b.w, b.h, true))) yield;
   if (
-    set1(out.crinoid2, 0.18, (r, b, i) => {
+    set1(out.crinoid2, "pulse", 0.18, (r, b, i) => {
       const pairs: [Pal, number][] = [[L.bone, L.cyan[3]], [L.magenta, L.bone[4]]];
       const [pl, tp] = pairs[i];
       buildAnemone3d(r, 321 + i * 3, pl, tp, b.w, b.h, 18, true);
     })
   )
     yield;
-  if (set1(out.pen, 0.14, (r, b, i) => buildPen3d(r, 331 + i * 3, [L.magenta, L.cyan, L.ember][i], b.w, b.h))) yield;
-  if (set1(out.bamboo, 0.12, (r, b, i) => buildWhip3d(r, 341 + i * 5, [L.cyan, L.bone][i], b.w, b.h, true))) yield;
-  if (set1(out.crystal, 0.16, (r, b, i) => buildCrystal3d(r, 351 + i * 3, [L.cyan, L.magenta, L.indigo][i], b.w, b.h))) yield;
-  if (set1(out.bubblegum, 0.14, (r, b, i) => buildBranch3d(r, 361 + i * 7, [L.pink, L.red, L.magenta][i], b.w, b.h, 14, 3.6, 3, true))) yield;
-  if (
-    setFrames(
-      out.riftia,
-      4,
-      0.16,
-      (r, b, i, ph) => buildWorm3d(r, 371 + i * 3, L.red, L.bone, ph, 0, b.w, b.h, true),
-      (r, b, i, hide) => buildWorm3d(r, 371 + i * 3, L.red, L.bone, 0, hide, b.w, b.h, true)
-    )
-  )
-    yield;
-  if (set1(out.urchin2, 0.18, (r, b, i) => buildUrchin3d(r, 381 + i, [L.dark, L.indigo][i], b.w, b.h))) yield;
-  if (set1(out.star2, 0.1, (r, b, i) => buildStar3d(r, [L.bone, L.pink][i], b.w, b.h))) yield;
+  if (set1(out.pen, "sway", 0.14, (r, b, i) => buildPen3d(r, 331 + i * 3, [L.magenta, L.cyan, L.ember][i], b.w, b.h))) yield;
+  if (set1(out.bamboo, "sway", 0.12, (r, b, i) => buildWhip3d(r, 341 + i * 5, [L.cyan, L.bone][i], b.w, b.h, true))) yield;
+  if (set1(out.crystal, "shimmer", 0.16, (r, b, i) => buildCrystal3d(r, 351 + i * 3, [L.cyan, L.magenta, L.indigo][i], b.w, b.h))) yield;
+  if (set1(out.bubblegum, "shimmer", 0.14, (r, b, i) => buildBranch3d(r, 361 + i * 7, [L.pink, L.red, L.magenta][i], b.w, b.h, 14, 3.6, 3, true))) yield;
+  yield* setFrames(
+    out.riftia,
+    4,
+    0.16,
+    (r, b, i, ph) => buildWorm3d(r, 371 + i * 3, L.red, L.bone, ph, 0, b.w, b.h, true),
+    (r, b, i, hide) => buildWorm3d(r, 371 + i * 3, L.red, L.bone, 0, hide, b.w, b.h, true)
+  );
+  if (set1(out.urchin2, "pulse", 0.18, (r, b, i) => buildUrchin3d(r, 381 + i, [L.dark, L.indigo][i], b.w, b.h))) yield;
+  if (set1(out.star2, "shimmer", 0.1, (r, b, i) => buildStar3d(r, [L.bone, L.pink][i], b.w, b.h))) yield;
 
-  if (setFrames(out.jelly, NF, 0.12, (r, b, i, ph) => buildJelly3d(r, 401 + i, [L.blue, L.indigo, L.pink][i], ph, 6 + (i % 2) * 3, b.w, b.h))) yield;
-  if (setFrames(out.jelly2, NF, 0.12, (r, b, i, ph) => buildJelly3d(r, 411 + i, [L.magenta, L.cyan, L.purple][i], ph, 7 + (i % 2) * 3, b.w, b.h))) yield;
-  if (setFrames(out.crab, 4, 0.18, (r, b, i, ph) => buildCrab3d(r, [L.red, L.orange][i], ph, b.w, b.h))) yield;
-  if (setFrames(out.vent, 8, 0.16, (r, b, i, ph) => buildVent3d(r, 421 + i * 5, ph, b.w, b.h))) yield;
-  if (setFrames(out.chest, 4, 0.24, (r, b, _i, ph) => buildChest3d(r, ph, b.w, b.h))) yield;
+  yield* setFrames(out.jelly, NF, 0.12, (r, b, i, ph) => buildJelly3d(r, 401 + i, [L.blue, L.indigo, L.pink][i], ph, 6 + (i % 2) * 3, b.w, b.h));
+  yield* setFrames(out.jelly2, NF, 0.12, (r, b, i, ph) => buildJelly3d(r, 411 + i, [L.magenta, L.cyan, L.purple][i], ph, 7 + (i % 2) * 3, b.w, b.h));
+  yield* setFrames(out.crab, 4, 0.18, (r, b, i, ph) => buildCrab3d(r, [L.red, L.orange][i], ph, b.w, b.h));
+  yield* setFrames(out.vent, 8, 0.16, (r, b, i, ph) => buildVent3d(r, 421 + i * 5, ph, b.w, b.h));
+  yield* setFrames(out.chest, 4, 0.24, (r, b, _i, ph) => buildChest3d(r, ph, b.w, b.h));
+}
+
+export function copy3dBiotaTint(target: BioSet, src: BioSet, tint: [number, number]) {
+  for (const key of Object.keys(target)) {
+    const list = target[key];
+    const srcList = src[key];
+    if (!list || !srcList) continue;
+    for (let i = 0; i < list.length && i < srcList.length; i++) {
+      const b = list[i];
+      const sb = srcList[i];
+      if (sb.f3d?.length) b.f3d = sb.f3d.map((cv) => tintCv(cv, tint[0], tint[1]));
+      if (sb.shy3d?.length) b.shy3d = sb.shy3d.map((cv) => tintCv(cv, tint[0], tint[1]));
+      if (sb.anim) b.anim = sb.anim;
+    }
+  }
 }
 
 // ============================================================================
@@ -1193,7 +1233,11 @@ export function paintPinnacle3d(
   const caveBounds = cave ? sampleCaveBounds(cave, seed, W) : null;
   const stepX = 3;
   const cols = Math.floor((last - first) / stepX) + 1;
-  const rows = 26;
+  const rows = 34;
+  const smooth01 = (t: number) => {
+    const c = clamp01(t);
+    return c * c * (3 - 2 * c);
+  };
 
   // Palette colors in Three.js space
   const cDeep = abgrToColor(st.ramp[0], 0.85);
@@ -1214,12 +1258,12 @@ export function paintPinnacle3d(
 
   const tmpCol = new THREE.Color();
   for (let ix = 0; ix < cols; ix++) {
-    const x = Math.min(last, first + ix * stepX);
+    const x = ix === cols - 1 ? last : Math.min(last, first + ix * stepX);
     const ty = top[x];
     const by = bot[x];
     const span = Math.max(4, by - ty);
     const edgeX = Math.min(x - first, last - x);
-    const edgeFactorX = clamp01(edgeX / 34);
+    const edgeFactorX = smooth01(edgeX / 34);
 
     for (let iy = 0; iy < rows; iy++) {
       const v = iy / (rows - 1);
@@ -1230,19 +1274,19 @@ export function paintPinnacle3d(
       const dEdge = Math.min(edgeX, edgeY);
 
       // 3D depth relief Z: smoothly zero at edges, sculpted rocky strata + crag volume inside
-      const swell = Math.pow(clamp01(dEdge / 26), 0.58) * edgeFactorX;
-      const strata = Math.sin(y * 0.14 + Math.sin(x * 0.03 + seed) * 2.2) * 3.8;
-      const crag = rockNoise(x, y, seed) * 6.5;
+      const swell = Math.pow(clamp01(dEdge / 26), 0.62) * edgeFactorX;
+      const strata = Math.sin(y * 0.11 + Math.sin(x * 0.028 + seed) * 1.8) * 3.2;
+      const crag = rockNoise(x, y, seed) * 4.8;
       let z = swell * (34 + strata + crag);
 
-      // Check cave carve-out: depress Z deeply backward into a shadowed 3D stone grotto!
+      // Check cave carve-out: smoothly depress Z backward into a shadowed 3D stone grotto!
       let caveDepth = 0;
       if (cave && caveBounds && x >= caveBounds.xMin && x <= caveBounds.xMax) {
         const cy0 = caveBounds.ceil[x];
         const cy1 = caveBounds.floor[x];
-        if (cy0 >= 0 && y >= cy0 - 3 && y <= cy1 + 3) {
-          const innerY = Math.min(y - (cy0 - 3), cy1 + 3 - y) / Math.max(4, (cy1 - cy0) * 0.5);
-          const archK = clamp01(innerY * 1.45);
+        if (cy0 >= 0 && y >= cy0 - 5 && y <= cy1 + 5) {
+          const innerY = Math.min(y - (cy0 - 5), cy1 + 5 - y) / Math.max(4, (cy1 - cy0) * 0.45);
+          const archK = smooth01(innerY * 1.35);
           let mouthFade = 1;
           if (cave.kind === "alcove") {
             const bx = cave.gx - cave.dir * cave.grx * 0.86;
@@ -1254,25 +1298,25 @@ export function paintPinnacle3d(
             mouthFade = Math.sin(f * Math.PI);
           }
           caveDepth = archK * (0.45 + 0.55 * mouthFade);
-          z = z * (1 - caveDepth) - caveDepth * 42 + rockNoise(x * 1.5, y * 1.5, seed + 9) * 2.8 * caveDepth;
+          z = z * (1 - caveDepth) - caveDepth * 38 + rockNoise(x * 1.3, y * 1.3, seed + 9) * 2.2 * caveDepth;
         }
       }
 
       positions.push(x - W * 0.5, H * 0.5 - y, z);
 
       // Compute geological vertex coloring (top sand/crust -> rock strata -> cave shadow)
-      if (caveDepth > 0.28) {
-        tmpCol.copy(cShadow).lerp(cDeep, clamp01(caveDepth * 1.15));
+      if (caveDepth > 0.25) {
+        tmpCol.copy(cShadow).lerp(cDeep, smooth01((caveDepth - 0.25) / 0.65));
       } else if (zone === 0 && dTop < 17) {
         const sf = clamp01(dTop / 17);
         tmpCol.copy(cSandHi).lerp(cSandMid, sf * 0.7).lerp(cSandDark, Math.max(0, sf - 0.6) * 1.8);
       } else if (zone > 0 && dTop < 10) {
         tmpCol.copy(cCrust1).lerp(cCrust0, clamp01(dTop / 10));
       } else {
-        const band = 0.5 + 0.5 * Math.sin(y * 0.08 + rockNoise(x, y, seed + 4) * 1.4);
-        const shade = clamp01(1 - v * 0.65 + (z / 44) * 0.3);
-        tmpCol.copy(cShadow).lerp(cMid, shade * 0.7).lerp(cLit, band * shade * 0.85);
-        if (shade > 0.72 && band > 0.6) tmpCol.lerp(cHi, (shade - 0.72) * 1.6);
+        const band = 0.5 + 0.5 * Math.sin(y * 0.08 + rockNoise(x, y, seed + 4) * 1.2);
+        const shade = clamp01(1 - v * 0.65 + (z / 44) * 0.28);
+        tmpCol.copy(cShadow).lerp(cMid, shade * 0.7).lerp(cLit, band * shade * 0.82);
+        if (shade > 0.72 && band > 0.6) tmpCol.lerp(cHi, (shade - 0.72) * 1.4);
       }
       colors.push(tmpCol.r, tmpCol.g, tmpCol.b);
     }
@@ -1295,11 +1339,11 @@ export function paintPinnacle3d(
   geo.setIndex(indices);
   geo.computeVertexNormals();
 
-  const rockMat = new THREE.MeshStandardMaterial({
+  const rockMat = cachedStdMat("pinnacleVtxRockSmooth", {
     vertexColors: true,
-    roughness: 0.72,
-    metalness: 0.06,
-    flatShading: true,
+    roughness: 0.82,
+    metalness: 0.04,
+    flatShading: false,
     side: THREE.DoubleSide,
   });
   root.add(new THREE.Mesh(geo, rockMat));
@@ -1330,10 +1374,11 @@ export function paintPinnacle3d(
       bPos.setXYZ(k, vx * 1.3 * n, vy * 0.72 * n, vz * 0.9 * n);
     }
     bGeo.computeVertexNormals();
+    const bCol = i % 2 === 0 ? cMid : cLit;
     const boulder = new THREE.Mesh(
       bGeo,
-      new THREE.MeshStandardMaterial({
-        color: i % 2 === 0 ? cMid : cLit,
+      cachedStdMat(`boulder|${bCol.getHexString()}`, {
+        color: bCol,
         roughness: 0.78,
         metalness: 0.05,
         flatShading: true,
@@ -1345,12 +1390,11 @@ export function paintPinnacle3d(
 
   // 3. Zone-2/3 Luminous Mineral Crystal Accents tucked in deep cave alcoves
   if (cave && zone >= 2) {
-    const crysMat = new THREE.MeshPhysicalMaterial({
+    const crysMat = cachedStdMat("caveCrystal", {
       color: 0xc4b5fd,
       emissive: 0x8b5cf6,
       emissiveIntensity: 0.65,
-      roughness: 0.15,
-      clearcoat: 0.9,
+      roughness: 0.08,
       flatShading: true,
     });
     const cx = cave.gx - W * 0.5;
@@ -1363,8 +1407,8 @@ export function paintPinnacle3d(
     }
   }
 
-  // Render at 2x HiDPI and clip cleanly to the exact silhouette mask if needed
-  const cv = renderSceneOrtho(scene, W, H, 2, 0);
+  // Render at crisp HiDPI (1.5x on software WebGL, 2x on hardware GPU)
+  const cv = renderSceneOrtho(scene, W, H, isSoftwareWebGL() ? 1.5 : 2, 0);
   disposeGroup(root);
   return cv;
 }
@@ -1374,7 +1418,7 @@ export function paintPinnacle3d(
  */
 export function paintCaveRim3d(
   top: Int16Array,
-  _bot: Int16Array,
+  bot: Int16Array,
   W: number,
   H: number,
   st: RockPal2d,
@@ -1385,57 +1429,113 @@ export function paintCaveRim3d(
   const caveBounds = sampleCaveBounds(cave, seed, W);
   if (caveBounds.xMax < caveBounds.xMin) return undefined;
 
-  const scene = createUnderwaterScene(0.95, 1.9, 0.9);
+  const scene = createUnderwaterScene(0.95, 1.85, 0.9);
   const root = new THREE.Group();
   scene.add(root);
 
-  const rockMat = new THREE.MeshStandardMaterial({
-    color: abgrToColor(st.ramp[2]),
-    roughness: 0.74,
-    metalness: 0.05,
-    flatShading: true,
-  });
-  const rimMat = new THREE.MeshStandardMaterial({
-    color: abgrToColor(st.ramp[3], 1.08),
-    roughness: 0.68,
-    flatShading: true,
-  });
+  const cDeep = abgrToColor(st.ramp[0], 0.9);
+  const cShadow = abgrToColor(st.ramp[1]);
+  const cMid = abgrToColor(st.ramp[2]);
+  const cLit = abgrToColor(st.ramp[3], 1.02);
 
-  // Build sculpted 3D brow ridge along upper cave ceiling
-  const pts: THREE.Vector3[] = [];
+  // Build sculpted, tapered rocky brow ridge strictly inside rock silhouette (never a floating straight tube!)
+  const spanW = caveBounds.xMax - caveBounds.xMin;
   const xStart = cave.kind === "alcove"
-    ? Math.round(caveBounds.xMin + (caveBounds.xMax - caveBounds.xMin) * (cave.dir >= 0 ? 0.22 : 0.04))
-    : caveBounds.xMin + 4;
+    ? Math.round(caveBounds.xMin + spanW * (cave.dir >= 0 ? 0.28 : 0.1))
+    : Math.round(caveBounds.xMin + spanW * 0.1);
   const xEnd = cave.kind === "alcove"
-    ? Math.round(caveBounds.xMin + (caveBounds.xMax - caveBounds.xMin) * (cave.dir >= 0 ? 0.96 : 0.78))
-    : caveBounds.xMax - 4;
+    ? Math.round(caveBounds.xMin + spanW * (cave.dir >= 0 ? 0.9 : 0.72))
+    : Math.round(caveBounds.xMax - spanW * 0.1);
 
-  for (let x = xStart; x <= xEnd; x += 8) {
+  const browSamples: { x: number; cy: number }[] = [];
+  for (let x = xStart; x <= xEnd; x += 6) {
     const cy = caveBounds.ceil[x];
-    if (cy < 0 || top[x] < 0 || cy < top[x] + 4) continue;
-    pts.push(new THREE.Vector3(x - W * 0.5, H * 0.5 - (cy - 2), 20));
+    if (cy < 0 || top[x] < 0 || bot[x] < 0) continue;
+    if (cy < top[x] + 7 || cy > bot[x] - 8) continue;
+    browSamples.push({ x, cy });
   }
-  if (pts.length >= 3) {
-    const curve = new THREE.CatmullRomCurve3(pts);
-    const brow = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, 4.2, 7, false), rimMat);
-    brow.scale.set(1, 0.78, 1.3);
-    root.add(brow);
 
-    // Sculpted 3D hanging limestone stalactites along the brow
-    const nStal = cave.kind === "tunnel" ? 5 : 3;
+  if (browSamples.length >= 4) {
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const indices: number[] = [];
+    const tmp = new THREE.Color();
+    const nCols = browSamples.length;
+    const nRows = 4;
+
+    for (let i = 0; i < nCols; i++) {
+      const t = i / (nCols - 1);
+      const taper = Math.sin(t * Math.PI);
+      const crag = Math.sin(t * 17 + seed) * 1.1;
+      const thick = (1.6 + taper * 5.2 + crag * taper) * taper;
+      const { x, cy } = browSamples[i];
+      const yTop = cy - 2.2 - thick;
+      const yBot = cy + 0.6 + taper * 1.4;
+      const zPeak = (10 + crag * 1.5) * taper;
+
+      for (let r = 0; r < nRows; r++) {
+        const v = r / (nRows - 1);
+        const y = yTop + (yBot - yTop) * v;
+        const z = Math.sin(v * Math.PI) * zPeak;
+        positions.push(x - W * 0.5, H * 0.5 - y, z);
+
+        if (v < 0.35) tmp.copy(cMid).lerp(cLit, taper * 0.55);
+        else if (v < 0.75) tmp.copy(cShadow).lerp(cMid, taper * 0.65);
+        else tmp.copy(cDeep).lerp(cShadow, 0.5);
+        colors.push(tmp.r, tmp.g, tmp.b);
+      }
+    }
+
+    for (let i = 0; i < nCols - 1; i++) {
+      for (let r = 0; r < nRows - 1; r++) {
+        const a = i * nRows + r;
+        const b = (i + 1) * nRows + r;
+        const c = i * nRows + (r + 1);
+        const d = (i + 1) * nRows + (r + 1);
+        indices.push(a, c, b);
+        indices.push(b, c, d);
+      }
+    }
+
+    const browGeo = new THREE.BufferGeometry();
+    browGeo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    browGeo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    browGeo.setIndex(indices);
+    browGeo.computeVertexNormals();
+    root.add(
+      new THREE.Mesh(
+        browGeo,
+        cachedStdMat("caveBrowVtx", {
+          vertexColors: true,
+          roughness: 0.85,
+          flatShading: false,
+          side: THREE.DoubleSide,
+        })
+      )
+    );
+
+    // Subtle, rounded organic limestone stalactite nubs tucked gently under the brow
+    const stalMat = cachedStdMat(`caveStal|${cShadow.getHexString()}`, {
+      color: cShadow,
+      roughness: 0.84,
+      flatShading: false,
+    });
+    const nStal = cave.kind === "tunnel" ? 4 : 3;
     for (let i = 0; i < nStal; i++) {
-      const f = 0.2 + (i / Math.max(1, nStal - 1)) * 0.6;
-      const pt = curve.getPoint(f);
-      const sh = 6 + hash2(i, seed, 41) * 7.5;
-      const sr = 2.6 + hash2(i, seed, 53) * 1.8;
-      const stal = new THREE.Mesh(new THREE.ConeGeometry(sr, sh, 6), rockMat);
-      stal.position.set(pt.x, pt.y - sh * 0.45, 22);
-      stal.rotation.z = Math.PI + (hash2(i, seed, 59) - 0.5) * 0.18;
+      const f = 0.24 + (i / Math.max(1, nStal - 1)) * 0.52;
+      const idx = Math.min(nCols - 2, Math.max(1, Math.round(f * (nCols - 1))));
+      const { x, cy } = browSamples[idx];
+      const sh = 4.2 + hash2(i, seed, 41) * 4.5;
+      const sr = 2.2 + hash2(i, seed, 53) * 1.4;
+      const stal = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), stalMat);
+      stal.scale.set(sr, sh * 0.68, sr * 0.8);
+      stal.position.set(x - W * 0.5, H * 0.5 - (cy + sh * 0.28), 6);
+      stal.rotation.z = (hash2(i, seed, 59) - 0.5) * 0.16;
       root.add(stal);
     }
   }
 
-  const cv = renderSceneOrtho(scene, W, H, 2, 0);
+  const cv = renderSceneOrtho(scene, W, H, isSoftwareWebGL() ? 1.5 : 2, 0);
   disposeGroup(root);
   return cv;
 }
@@ -1518,7 +1618,7 @@ export function paintColumn3d(
   root.add(
     new THREE.Mesh(
       geo,
-      new THREE.MeshStandardMaterial({
+      cachedStdMat("colVtxRock", {
         vertexColors: true,
         roughness: 0.8,
         flatShading: true,
@@ -1555,6 +1655,7 @@ export function paintFloor3d(top: Int16Array, W: number, H: number, st: RockPal2
   out.height = H;
   const octx = out.getContext("2d")!;
   const chunkW = Math.ceil(W / 2);
+  const pad = 40;
 
   const cDark = abgrToColor(st.ramp[0], 0.8);
   const cShadow = abgrToColor(st.ramp[1]);
@@ -1564,14 +1665,15 @@ export function paintFloor3d(top: Int16Array, W: number, H: number, st: RockPal2
 
   for (let cIdx = 0; cIdx < 2; cIdx++) {
     const x0 = cIdx * chunkW;
-    const x1 = Math.min(W - 1, (cIdx + 1) * chunkW);
-    const cw = x1 - x0 + 1;
+    const x1 = Math.min(W, (cIdx + 1) * chunkW);
+    const cw = x1 - x0;
+    const rw = cw + pad * 2;
     const scene = createUnderwaterScene(0.95, 1.85, 0.9);
     const root = new THREE.Group();
     scene.add(root);
 
     const stepX = 8;
-    const cols = Math.floor(cw / stepX) + 1;
+    const cols = Math.ceil(rw / stepX) + 1;
     const rows = 14;
     const positions: number[] = [];
     const colors: number[] = [];
@@ -1579,15 +1681,17 @@ export function paintFloor3d(top: Int16Array, W: number, H: number, st: RockPal2
     const tmp = new THREE.Color();
 
     for (let ix = 0; ix < cols; ix++) {
-      const gx = Math.min(x1, x0 + ix * stepX);
-      const ty = top[gx];
+      const lx = Math.min(rw, ix * stepX);
+      const gx = x0 - pad + lx;
+      const cx = Math.max(0, Math.min(W - 1, Math.round(gx)));
+      const ty = top[cx];
       const span = Math.max(8, H - ty);
       for (let iy = 0; iy < rows; iy++) {
         const v = iy / (rows - 1);
         const y = ty + v * span;
         const dune = Math.sin(gx * 0.025 + v * 2.5) * 6 + Math.cos(gx * 0.07 - y * 0.05) * 3;
         const z = (1 - Math.abs(v - 0.25)) * 28 + dune;
-        positions.push(gx - x0 - cw * 0.5, H * 0.5 - y, z);
+        positions.push(lx - rw * 0.5, H * 0.5 - y, z);
 
         if (v < 0.35) {
           tmp.copy(cSandTop).lerp(cSandMid, v / 0.35);
@@ -1614,27 +1718,30 @@ export function paintFloor3d(top: Int16Array, W: number, H: number, st: RockPal2
     geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     geo.setIndex(indices);
     geo.computeVertexNormals();
-    root.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78, flatShading: true })));
+    root.add(new THREE.Mesh(geo, cachedStdMat("floorVtxRockSmooth", { vertexColors: true, roughness: 0.84, flatShading: false })));
 
-    // 3D scattered basalt boulders resting cleanly on the seabed crest
-    const r = rng(901 + cIdx * 77);
-    for (let b = 0; b < 14; b++) {
-      const gx = x0 + 35 + (b / 13) * (cw - 70) + (r() - 0.5) * 24;
-      const ty = top[Math.max(0, Math.min(W - 1, Math.round(gx)))];
+    // 3D scattered basalt boulders resting cleanly on the seabed crest (including overlap across chunk boundary)
+    const r = rng(901);
+    for (let b = 0; b < 28; b++) {
+      const gx = 35 + (b / 27) * (W - 70) + (r() - 0.5) * 24;
       const rad = 8 + r() * 14;
+      const rr = r();
+      if (gx < x0 - pad - rad * 2 || gx > x1 + pad + rad * 2) continue;
+      const ty = top[Math.max(0, Math.min(W - 1, Math.round(gx)))];
       const bGeo = new THREE.DodecahedronGeometry(rad, 1);
+      const bCol = b % 2 ? cMid : cShadow;
       const bMesh = new THREE.Mesh(
         bGeo,
-        new THREE.MeshStandardMaterial({ color: b % 2 ? cMid : cShadow, roughness: 0.8, flatShading: true })
+        cachedStdMat(`floorBoulder|${bCol.getHexString()}`, { color: bCol, roughness: 0.8, flatShading: true })
       );
       bMesh.scale.set(1.35, 0.55, 0.9);
-      bMesh.position.set(gx - x0 - cw * 0.5, H * 0.5 - (ty + 3), 24 + r() * 10);
+      bMesh.position.set(gx - (x0 - pad) - rw * 0.5, H * 0.5 - (ty + 3), 24 + rr * 10);
       root.add(bMesh);
     }
 
-    const chunkCv = renderSceneOrtho(scene, cw, H, 1, 0);
+    const chunkCv = renderSceneOrtho(scene, rw, H, 1, 0);
     disposeGroup(root);
-    octx.drawImage(chunkCv, x0, 0);
+    octx.drawImage(chunkCv, pad, 0, cw, H, x0, 0, cw, H);
   }
   return out;
 }
@@ -1655,7 +1762,7 @@ export function genForegroundOutcrops3d(): HTMLCanvasElement[] {
       H,
       (root) => {
         const by = -H * 0.5 + 2;
-        const rockMat = new THREE.MeshStandardMaterial({
+        const rockMat = cachedStdMat("fgRock", {
           color: 0x18254a,
           roughness: 0.76,
           metalness: 0.08,
@@ -1727,6 +1834,7 @@ export function makeFar3_3d(st: RockPal2d): HTMLCanvasElement | undefined {
   out.height = h;
   const octx = out.getContext("2d")!;
   const chunkW = 1050;
+  const pad = 40;
   const ridge = (x: number) => {
     const t = (x / w) * TAU;
     return 256 - Math.sin(t * 3 + 0.4) * 58 - Math.cos(t * 6 + 2) * 30 + Math.sin(t * 23) * 6;
@@ -1737,29 +1845,34 @@ export function makeFar3_3d(st: RockPal2d): HTMLCanvasElement | undefined {
 
   for (let cIdx = 0; cIdx < 2; cIdx++) {
     const x0 = cIdx * chunkW;
-    const cw = chunkW + 1;
+    const rw = chunkW + pad * 2;
     const scene = createUnderwaterScene(1.0, 1.7, 0.85);
     const root = new THREE.Group();
     scene.add(root);
 
     const stepX = 8;
-    const cols = Math.floor(cw / stepX) + 1;
-    const rows = 12;
+    const cols = Math.ceil(rw / stepX) + 1;
+    const rows = 14;
     const positions: number[] = [];
     const colors: number[] = [];
     const indices: number[] = [];
     const tmp = new THREE.Color();
 
     for (let ix = 0; ix < cols; ix++) {
-      const gx = x0 + Math.min(chunkW, ix * stepX);
+      const lx = Math.min(rw, ix * stepX);
+      const gx = x0 - pad + lx;
       const ry = ridge(gx);
       const span = Math.max(20, h - ry);
       for (let iy = 0; iy < rows; iy++) {
         const v = iy / (rows - 1);
         const y = ry + v * span;
-        const z = Math.sin(gx * 0.015 + v * 2) * 14 + (1 - v) * 22;
-        positions.push(gx - x0 - cw * 0.5, h * 0.5 - y, z);
-        tmp.copy(v < 0.08 ? cTop : cMid).lerp(cBot, v);
+        const z = Math.sin((gx / w) * TAU * 5 + v * 2) * 14 + (1 - v) * 22;
+        positions.push(lx - rw * 0.5, h * 0.5 - y, z);
+        if (v < 0.14) {
+          tmp.copy(cTop).lerp(cMid, v / 0.14);
+        } else {
+          tmp.copy(cMid).lerp(cBot, (v - 0.14) / 0.86);
+        }
         colors.push(tmp.r, tmp.g, tmp.b);
       }
     }
@@ -1778,11 +1891,11 @@ export function makeFar3_3d(st: RockPal2d): HTMLCanvasElement | undefined {
     geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     geo.setIndex(indices);
     geo.computeVertexNormals();
-    root.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78, flatShading: true })));
+    root.add(new THREE.Mesh(geo, cachedStdMat("far3VtxRockSmooth", { vertexColors: true, roughness: 0.84, flatShading: false })));
 
-    const chunkCv = renderSceneOrtho(scene, cw, h, 1, 0);
+    const chunkCv = renderSceneOrtho(scene, rw, h, 1, 0);
     disposeGroup(root);
-    octx.drawImage(chunkCv, x0, 0);
+    octx.drawImage(chunkCv, pad, 0, chunkW, h, x0, 0, chunkW, h);
   }
 
   // Soft water fade at bottom so ridge melts cleanly into abyssal depth
@@ -1806,6 +1919,7 @@ export function makeDeep2_3d(st: RockPal2d): HTMLCanvasElement | undefined {
   out.height = h;
   const octx = out.getContext("2d")!;
   const chunkW = 1000;
+  const pad = 40;
   const r = rng(1414);
 
   const caps: [number, number, number, number, number, number][] = [];
@@ -1825,19 +1939,19 @@ export function makeDeep2_3d(st: RockPal2d): HTMLCanvasElement | undefined {
 
   for (let cIdx = 0; cIdx < 2; cIdx++) {
     const x0 = cIdx * chunkW;
-    const cw = chunkW;
+    const rw = chunkW + pad * 2;
     const scene = createUnderwaterScene(0.85, 1.6, 0.9);
     const root = new THREE.Group();
     scene.add(root);
 
-    const spireMat = new THREE.MeshStandardMaterial({ color: cStem, roughness: 0.76, flatShading: true });
-    const capMat = new THREE.MeshStandardMaterial({ color: cCap, roughness: 0.68, flatShading: true });
+    const spireMat = cachedStdMat(`deepSpire|${cStem.getHexString()}`, { color: cStem, roughness: 0.76, flatShading: true });
+    const capMat = cachedStdMat(`deepCap|${cCap.getHexString()}`, { color: cCap, roughness: 0.68, flatShading: true });
 
     for (let i = 0; i < caps.length; i++) {
       const [cx, ty, R, ch, neck, lean] = caps[i];
       for (const dx of [-w, 0, w]) {
-        const lx = cx + dx - x0 - cw * 0.5;
-        if (lx < -cw * 0.8 || lx > cw * 0.8) continue;
+        const lx = cx + dx - (x0 - pad) - rw * 0.5;
+        if (lx < -rw * 0.8 || lx > rw * 0.8) continue;
         const stemH = h - ty;
         const cyl = new THREE.Mesh(new THREE.CylinderGeometry(neck, neck * 1.9, stemH, 10), spireMat);
         cyl.position.set(lx + lean * 0.5, h * 0.5 - (ty + stemH * 0.5), 0);
@@ -1850,7 +1964,7 @@ export function makeDeep2_3d(st: RockPal2d): HTMLCanvasElement | undefined {
         root.add(cap);
 
         const veinCol = veins[i % veins.length];
-        const vMat = new THREE.MeshStandardMaterial({ color: veinCol, emissive: veinCol, emissiveIntensity: 0.85, roughness: 0.3 });
+        const vMat = cachedStdMat(`deepVein|${veinCol}`, { color: veinCol, emissive: veinCol, emissiveIntensity: 0.85, roughness: 0.3 });
         const vein = new THREE.Mesh(new THREE.BoxGeometry(2.5, 52, 6), vMat);
         vein.position.set(lx + (i % 2 ? 8 : -8), h * 0.5 - (ty + 42), neck * 0.8);
         vein.rotation.z = (i % 2 ? -1 : 1) * 0.14;
@@ -1858,21 +1972,26 @@ export function makeDeep2_3d(st: RockPal2d): HTMLCanvasElement | undefined {
       }
     }
 
-    // Natural 3D arch bridges
+    // Natural 3D arch bridges wrapped seamlessly across chunk boundaries
     for (const i of [1, 4]) {
       const a = caps[i];
       const b = caps[i + 1];
-      const curve = new THREE.QuadraticBezierCurve3(
-        new THREE.Vector3(a[0] + a[2] * 0.4 - x0 - cw * 0.5, h * 0.5 - (a[1] + 8), 0),
-        new THREE.Vector3((a[0] + b[0]) * 0.5 - x0 - cw * 0.5, h * 0.5 - (Math.min(a[1], b[1]) - 42), 0),
-        new THREE.Vector3(b[0] - b[2] * 0.4 - x0 - cw * 0.5, h * 0.5 - (b[1] + 8), 0)
-      );
-      root.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 14, 11, 8, false), spireMat));
+      for (const dx of [-w, 0, w]) {
+        const ax = a[0] + a[2] * 0.4 + dx - (x0 - pad) - rw * 0.5;
+        const bx = b[0] - b[2] * 0.4 + dx - (x0 - pad) - rw * 0.5;
+        if (bx < -rw * 0.6 || ax > rw * 0.6) continue;
+        const curve = new THREE.QuadraticBezierCurve3(
+          new THREE.Vector3(ax, h * 0.5 - (a[1] + 8), 0),
+          new THREE.Vector3((ax + bx) * 0.5, h * 0.5 - (Math.min(a[1], b[1]) - 42), 0),
+          new THREE.Vector3(bx, h * 0.5 - (b[1] + 8), 0)
+        );
+        root.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 14, 11, 8, false), spireMat));
+      }
     }
 
-    const chunkCv = renderSceneOrtho(scene, cw, h, 1, 0);
+    const chunkCv = renderSceneOrtho(scene, rw, h, 1, 0);
     disposeGroup(root);
-    octx.drawImage(chunkCv, x0, 0);
+    octx.drawImage(chunkCv, pad, 0, chunkW, h, x0, 0, chunkW, h);
   }
 
   // Atmospheric deep water tint strictly inside silhouette

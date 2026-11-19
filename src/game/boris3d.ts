@@ -91,7 +91,7 @@ export interface Boris3DRig {
 const HX = 0.262; // 0.272 - 0.01
 const HY = -0.087; // -(0.082 + 0.005)
 const UX_TIP = 0.3636;
-const UY_TIP = -0.0921;
+const UY_TIP = -0.080;
 const LX_TIP = 0.331;
 const LY_TIP = -0.0905;
 
@@ -120,7 +120,7 @@ const TOP_SEGS: [Pt, Pt, Pt, Pt][] = [
   [to3D(-0.226, 0.018), to3D(-0.242, -0.105), to3D(-0.205, -0.225), to3D(-0.095, -0.242)],
   [to3D(-0.095, -0.242), to3D(0.015, -0.258), to3D(0.13, -0.215), to3D(0.195, -0.145)],
   [to3D(0.195, -0.145), to3D(0.245, -0.092), to3D(0.272, -0.008), to3D(0.312, 0.044)],
-  [to3D(0.312, 0.044), to3D(0.345, 0.064), to3D(0.372, 0.069), [UX_TIP, UY_TIP]],
+  [to3D(0.312, 0.044), to3D(0.345, 0.056), to3D(0.368, 0.062), [UX_TIP, UY_TIP]],
 ];
 
 const BOT_CUBICS: [Pt, Pt, Pt, Pt][] = [
@@ -180,7 +180,7 @@ function evalMouthSeamY(x: number): number {
   }
   const u = clamp((x - LX_TIP) / (UX_TIP - LX_TIP), 0, 1);
   const base = HY - 0.004;
-  return base + (UY_TIP - base) * Math.pow(u, 1.4);
+  return base + (-0.096 - base) * Math.pow(u, 1.4);
 }
 
 // Anatomical 3D body thickness (plump butterflyfish lens shape)
@@ -1007,22 +1007,27 @@ export function createBoris3DRig(maxAnisotropy = 4): Boris3DRig {
   };
 
   // Vibrant underwater fish material helper (preserves 2D colors cleanly while showing 3D shading + wet sheen)
-  const makeFishMat = (map: THREE.Texture, extra?: Partial<THREE.MeshPhysicalMaterialParameters>) =>
-    track(
+  const makeFishMat = (map: THREE.Texture, extra?: Partial<THREE.MeshPhysicalMaterialParameters>) => {
+    const rough = extra?.roughness !== undefined ? Math.max(0.76, extra.roughness) : 0.88;
+    const coat = extra?.clearcoat !== undefined ? Math.min(0.05, extra.clearcoat) : 0.03;
+    const envInt = extra?.envMapIntensity !== undefined ? Math.min(0.1, extra.envMapIntensity) : 0.07;
+    const emInt = extra?.emissiveIntensity !== undefined ? Math.min(0.2, extra.emissiveIntensity) : 0.14;
+    return track(
       new THREE.MeshPhysicalMaterial({
         map,
         roughnessMap: roughness,
-        roughness: 0.34,
-        metalness: 0.02,
-        clearcoat: 0.32,
-        clearcoatRoughness: 0.22,
-        envMapIntensity: 0.35,
         emissiveMap: map,
         emissive: new THREE.Color("#ffffff"),
-        emissiveIntensity: 0.24,
         ...extra,
+        roughness: rough,
+        metalness: 0,
+        clearcoat: coat,
+        clearcoatRoughness: 0.65,
+        envMapIntensity: envInt,
+        emissiveIntensity: emInt,
       })
     );
+  };
 
   // 1. Main Torso Body (exact 2D silhouette + seamless flank markings + navy rim outline)
   const bodyGeo = track(buildBorisBodyGeometry());
@@ -1118,9 +1123,10 @@ export function createBoris3DRig(maxAnisotropy = 4): Boris3DRig {
     new THREE.MeshPhysicalMaterial({
       color: "#eb6c8e",
       emissive: "#eb6c8e",
-      emissiveIntensity: 0.22,
-      roughness: 0.28,
-      clearcoat: 0.6,
+      emissiveIntensity: 0.14,
+      roughness: 0.56,
+      clearcoat: 0.08,
+      envMapIntensity: 0.07,
     })
   );
   const tongueGeo = track(new THREE.SphereGeometry(0.024, 16, 12));
@@ -1139,18 +1145,20 @@ export function createBoris3DRig(maxAnisotropy = 4): Boris3DRig {
     new THREE.MeshPhysicalMaterial({
       color: "#ffffff",
       emissive: "#ffffff",
-      emissiveIntensity: 0.35,
-      roughness: 0.08,
-      clearcoat: 1.0,
+      emissiveIntensity: 0.18,
+      roughness: 0.38,
+      clearcoat: 0.15,
+      envMapIntensity: 0.08,
     })
   );
   const irisMat = track(
     new THREE.MeshPhysicalMaterial({
       color: "#1b3a7a",
       emissive: "#1b3a7a",
-      emissiveIntensity: 0.25,
-      roughness: 0.14,
-      clearcoat: 0.9,
+      emissiveIntensity: 0.14,
+      roughness: 0.34,
+      clearcoat: 0.18,
+      envMapIntensity: 0.08,
     })
   );
   const pupilMat = track(new THREE.MeshBasicMaterial({ color: "#070d24" }));
@@ -1221,7 +1229,13 @@ export function createBoris3DRig(maxAnisotropy = 4): Boris3DRig {
     transparent: true,
     opacity: 0.86,
   });
-  const pecZ = evalBodyHalfZ(0.108) * 0.78;
+  const pecTopY = interpCurveY(CURVE_SAMPLES.top, 0.108);
+  const pecBotY = interpCurveY(CURVE_SAMPLES.bot, 0.108);
+  const pecMidY = (pecTopY + pecBotY) * 0.5;
+  const pecHh = Math.max(0.01, (pecTopY - pecBotY) * 0.5);
+  const pecS = clamp((-0.123 - pecMidY) / pecHh, -0.92, 0.92);
+  const pecC = Math.sqrt(Math.max(0.06, 1 - pecS * pecS));
+  const pecZ = evalBodyHalfZ(0.108) * pecC * (1 - 0.26 * Math.pow(Math.abs(pecS), 1.55)) + 0.006;
 
   const pecLeft = new THREE.Group();
   pecLeft.position.set(0.108, -0.123, pecZ);
@@ -1328,9 +1342,9 @@ export function applyBoris3DPose(rig: Boris3DRig, p: Boris3DPose) {
 
   // 4. Pectoral & Pelvic Fin Flutter
   const finFlutter = p.wag2 * (p.sucking ? 1.55 : 1.0);
-  rig.pecLeft.rotation.y = -0.3 + Math.sin(finFlutter) * 0.24;
+  rig.pecLeft.rotation.y = 0.32 + Math.sin(finFlutter) * 0.16;
   rig.pecLeft.rotation.z = Math.cos(finFlutter) * 0.14;
-  rig.pecRight.rotation.y = 0.3 - Math.sin(finFlutter + 0.7) * 0.24;
+  rig.pecRight.rotation.y = -0.32 - Math.sin(finFlutter + 0.7) * 0.16;
   rig.pecRight.rotation.z = Math.cos(finFlutter + 0.7) * 0.14;
   rig.pelvicFin.rotation.z = -Math.sin(finFlutter) * 0.1;
 
@@ -1394,13 +1408,14 @@ class Boris3DService {
       const pmrem = new THREE.PMREMGenerator(renderer);
       const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
       scene.environment = envRT.texture;
+      scene.environmentIntensity = 0.24;
       pmrem.dispose();
 
-      // Bright aquatic studio lighting keeping ice-blue & yellow-lime vivid and crisp
-      const hemi = new THREE.HemisphereLight(0xebfbff, 0x3b82d6, 1.45);
-      const key = new THREE.DirectionalLight(0xffffff, 1.45);
+      // Soft aquatic studio lighting keeping colors vivid without white glare
+      const hemi = new THREE.HemisphereLight(0xebfbff, 0x3b82d6, 1.08);
+      const key = new THREE.DirectionalLight(0xffffff, 1.02);
       key.position.set(1.2, 2.2, 3.8);
-      const rim = new THREE.DirectionalLight(0x67e8f9, 0.9);
+      const rim = new THREE.DirectionalLight(0x67e8f9, 0.55);
       rim.position.set(-2.0, 0.9, -2.2);
       scene.add(hemi, key, rim);
 
@@ -1449,9 +1464,9 @@ class Boris3DService {
 
     const d = clamp(pose.depthFactor ?? 0, 0, 1);
     if (this.keyLight && this.hemiLight && this.rimLight) {
-      this.keyLight.intensity = 1.55 - d * 0.45;
-      this.hemiLight.intensity = 1.35 - d * 0.28;
-      this.rimLight.intensity = 0.95 + d * 0.75;
+      this.keyLight.intensity = 1.02 - d * 0.32;
+      this.hemiLight.intensity = 1.08 - d * 0.24;
+      this.rimLight.intensity = 0.55 + d * 0.45;
     }
 
     applyBoris3DPose(this.rig, pose);

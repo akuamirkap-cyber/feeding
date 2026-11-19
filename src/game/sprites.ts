@@ -46,7 +46,7 @@ export function fishMouthOffset(sp: Species, bodyLen: number): [number, number] 
   if (sp.style === "idol") return [bx + rx * 1.28, ry * 0.08];
   if (sp.style === "boris") return [bx + rx * 1.18, ry * 0.18];
   if (isDisc(sp)) return [bx + rx * 1.05, ry * 0.16];
-  if (sp.style === "parrot") return [bx + rx * 1.12, ry * 0.16];
+  if (sp.style === "parrot") return [bx + rx * 1.15, ry * 0.2];
   if (sp.style === "barracuda") return [bx + rx * 1.08, ry * 0.2];
   if (sp.style === "sailfish") return [bx + rx * 1.04, ry * 0.22];
   if (isLong(sp)) return [bx + rx * 0.96, ry * 0.18];
@@ -132,10 +132,10 @@ function getJawGeometry(sp: Species, bx: number, rx: number, ry: number, jawStat
   const puff = jawState === -1 ? 1 : 0;
 
   // Hinge anchor and closed mouth tip
-  const hingeX = bx + rx * (st === "idol" ? 0.68 : st === "boris" ? 0.68 : st === "andy" ? 0.6 : st === "layla" ? 0.8 : disc ? 0.68 : st === "eddy" ? 0.42 : st === "peter" ? 0.48 : st === "clown" ? 0.68 : st === "parrot" ? 0.66 : st === "leon" ? 0.72 : longBody ? 0.48 : 0.56);
-  const hingeY = ry * (st === "eddy" ? 0.28 : st === "idol" ? 0.06 : st === "layla" ? 0.18 : st === "peter" ? 0.34 : st === "clown" ? 0.14 : st === "leon" ? 0.34 : st === "boris" ? 0.15 : 0.15);
-  const closedTipX = bx + rx * (st === "idol" ? 1.48 : st === "boris" ? 1.24 : st === "andy" ? 1.16 : st === "layla" ? 1.14 : disc ? 1.12 : st === "parrot" ? 1.15 : st === "peter" ? 1.14 : st === "clown" ? 1.06 : st === "barracuda" ? 1.22 : st === "shark" ? 1.14 : st === "sailfish" ? 1.16 : st === "leon" ? 1.28 : st === "eddy" ? 1.04 : 1.08) + puff * rx * 0.03;
-  const closedTipY = ry * (st === "eddy" ? -0.06 : st === "shark" ? 0.18 : st === "idol" ? 0.0 : st === "layla" ? 0.14 : st === "peter" ? 0.26 : st === "clown" ? 0.1 : st === "leon" ? 0.36 : 0.12);
+  const hingeX = bx + rx * (st === "idol" ? 0.68 : st === "boris" ? 0.68 : st === "andy" ? 0.6 : st === "layla" ? 0.8 : disc ? 0.68 : st === "eddy" ? 0.42 : st === "peter" ? 0.48 : st === "clown" ? 0.68 : st === "parrot" ? 0.74 : st === "leon" ? 0.72 : longBody ? 0.48 : 0.56);
+  const hingeY = ry * (st === "eddy" ? 0.28 : st === "idol" ? 0.06 : st === "layla" ? 0.18 : st === "peter" ? 0.34 : st === "clown" ? 0.14 : st === "leon" ? 0.34 : st === "parrot" ? 0.16 : st === "boris" ? 0.15 : 0.15);
+  const closedTipX = bx + rx * (st === "idol" ? 1.48 : st === "boris" ? 1.24 : st === "andy" ? 1.16 : st === "layla" ? 1.14 : disc ? 1.12 : st === "parrot" ? 1.14 : st === "peter" ? 1.14 : st === "clown" ? 1.06 : st === "barracuda" ? 1.22 : st === "shark" ? 1.14 : st === "sailfish" ? 1.16 : st === "leon" ? 1.28 : st === "eddy" ? 1.04 : 1.08) + puff * rx * 0.03;
+  const closedTipY = ry * (st === "eddy" ? -0.06 : st === "shark" ? 0.18 : st === "idol" ? 0.0 : st === "layla" ? 0.14 : st === "peter" ? 0.26 : st === "clown" ? 0.1 : st === "leon" ? 0.36 : st === "parrot" ? 0.14 : 0.12);
 
   const dx = closedTipX - hingeX;
   const dy = closedTipY - hingeY;
@@ -145,8 +145,8 @@ function getJawGeometry(sp: Species, bx: number, rx: number, ry: number, jawStat
   const smallMouth = st === "layla" || st === "boris" || st === "idol" || st === "leon" || st === "clown";
   // Bruce (shark) always shows a toothy curved grin even at jawState === 0 (effectiveOpen >= 0.44)!
   const effectiveOpen = st === "shark" ? Math.max(open, puff ? 0.15 : 0.44) : open;
-  const upAng = baseAng - effectiveOpen * (st === "eddy" ? 0.22 : smallMouth ? 0.28 : st === "shark" ? 0.28 : 0.36);
-  const dnAng = baseAng + effectiveOpen * (st === "eddy" ? 0.86 : st === "barracuda" || st === "sailfish" ? 0.68 : st === "shark" ? 0.72 : smallMouth ? 0.68 : 0.78);
+  const upAng = baseAng - effectiveOpen * (st === "eddy" ? 0.22 : st === "parrot" ? 0.32 : smallMouth ? 0.28 : st === "shark" ? 0.28 : 0.36);
+  const dnAng = baseAng + effectiveOpen * (st === "eddy" ? 0.86 : st === "parrot" ? 0.88 : st === "barracuda" || st === "sailfish" ? 0.68 : st === "shark" ? 0.72 : smallMouth ? 0.68 : 0.78);
 
   // Andy, Ryan (andy), and Boris have an overhanging upper snout/lip ahead of the lower lip
   const overbite = st === "andy" || st === "boris";
@@ -302,9 +302,10 @@ function buildBodyPath(ctx: CanvasRenderingContext2D, sp: Species, bx: number, r
       ctx.bezierCurveTo(bx - rx * 0.5, -ry * 0.84, bx + rx * 0.04, -ry * 0.98, bx + rx * 0.5, -ry * 0.8);
       ctx.bezierCurveTo(bx + rx * 0.8, -ry * 0.64, bx + rx * 1.04, -ry * 0.24 - upLift * 0.4, upperTipX, upperTipY - ry * 0.06);
     } else if (st === "parrot") {
-      // prominent rounded forehead hump above eye + thick protruding upper lip
-      ctx.bezierCurveTo(bx - rx * 0.5, -ry * 0.88, bx + rx * 0.16, -ry * 1.02, bx + rx * 0.54, -ry * 0.94);
-      ctx.bezierCurveTo(bx + rx * 0.8, -ry * 0.96, bx + rx * 0.86, -ry * 0.48 - upLift * 0.4, upperTipX, upperTipY - ry * 0.05);
+      // Image 1: Napoleon Wrasse — full rounded overhanging jenong dome curving back into concave bridge above eye!
+      ctx.bezierCurveTo(bx - rx * 0.46, -ry * 0.74, bx + rx * 0.12, -ry * 1.0, bx + rx * 0.56, -ry * 1.04);
+      ctx.bezierCurveTo(bx + rx * 0.9, -ry * 1.05, bx + rx * 0.97, -ry * 0.72, bx + rx * 0.69, -ry * 0.46);
+      ctx.bezierCurveTo(bx + rx * 0.78, -ry * 0.26, bx + rx * 0.96, -ry * 0.08 - upLift * 0.4, upperTipX, upperTipY - ry * 0.04);
     } else if (st === "leon") {
       // Image 4: Lionfish — slim tail peduncle rising to high humped back, then concave sloping forehead/snout down to prominent protruding golden lips!
       ctx.bezierCurveTo(bx - rx * 0.56, -ry * 0.32, bx - rx * 0.14, -ry * 0.98, bx + rx * 0.26, -ry * 0.88);
@@ -366,6 +367,12 @@ function buildBodyPath(ctx: CanvasRenderingContext2D, sp: Species, bx: number, r
       ctx.quadraticCurveTo(upperTipX + rx * 0.04, upperTipY + ry * 0.06, lowerTipX, lowerTipY + ry * 0.1 + chinPuff);
       ctx.bezierCurveTo(bx + rx * 0.78, ry * 0.66 + chinPuff, bx + rx * 0.16, ry * 0.68 + chinPuff, bx - rx * 0.48, ry * 0.32);
       ctx.quadraticCurveTo(bx - rx * 0.76, ry * 0.22, bx - rx, wy);
+    } else if (st === "parrot") {
+      // Image 1: Deep smooth rounded royal-blue chin & plump belly tapering cleanly to tail peduncle
+      const chinPuff = puff * ry * 0.08;
+      ctx.quadraticCurveTo(upperTipX + rx * 0.03, upperTipY + ry * 0.05, lowerTipX, lowerTipY + ry * 0.08 + chinPuff);
+      ctx.bezierCurveTo(bx + rx * 0.92, ry * 0.68 + chinPuff, bx + rx * 0.38, ry * 1.02 + chinPuff, bx - rx * 0.24, ry * 0.84);
+      ctx.quadraticCurveTo(bx - rx * 0.68, ry * 0.56, bx - rx, wy);
     } else {
       const chinPuff = puff * ry * 0.1;
       ctx.quadraticCurveTo(upperTipX + rx * 0.03, upperTipY + ry * 0.06, lowerTipX, lowerTipY + ry * 0.08 + chinPuff);
@@ -607,7 +614,7 @@ export function renderFishCanvas(
                 : tKind === "fluke"
                   ? ry * 0.66
                   : st === "parrot"
-                    ? ry * 0.56
+                    ? ry * 0.5
                     : st === "eddy"
                       ? ry * 0.42
                       : tKind === "trunc"
@@ -657,6 +664,12 @@ export function renderFishCanvas(
       ctx.lineTo(-tl * 0.78, th * 0.38);
       ctx.lineTo(-tl * 0.94, th * 0.95);
       ctx.lineTo(0, wy * 0.85);
+    } else if (st === "parrot") {
+      // Image 1: Broad rounded-corner paddle tail (no sharp corners)
+      ctx.moveTo(0, -wy * 0.9);
+      ctx.bezierCurveTo(-tl * 0.34, -th * 1.0, -tl * 0.86, -th * 1.02, -tl * 0.98, -th * 0.52);
+      ctx.quadraticCurveTo(-tl * 1.08, 0, -tl * 0.98, th * 0.52);
+      ctx.bezierCurveTo(-tl * 0.86, th * 1.02, -tl * 0.34, th * 1.0, 0, wy * 0.9);
     } else if (tKind === "trunc") {
       ctx.moveTo(0, -wy * 0.95);
       ctx.quadraticCurveTo(-tl * 0.5, -th * 0.84, -tl, -th * 0.9);
@@ -687,6 +700,11 @@ export function renderFishCanvas(
   } else if (st === "orca") {
     tg.addColorStop(0, pal.body);
     tg.addColorStop(1, pal.dark);
+  } else if (st === "parrot") {
+    tg.addColorStop(0, "#0c6e38");
+    tg.addColorStop(0.45, "#3ac992");
+    tg.addColorStop(0.82, "#5ee0aa");
+    tg.addColorStop(1, "#0d3b82");
   } else {
     tg.addColorStop(0, tailDark);
     tg.addColorStop(0.55, tailBase);
@@ -726,15 +744,21 @@ export function renderFishCanvas(
       ctx.globalAlpha = 1;
     }
     if (st === "parrot") {
-      // Image 3: horizontal blue & teal ray bands along the truncate tail
-      ctx.strokeStyle = rgbaHex(pal.spot || "#06562a", 0.55);
-      ctx.lineWidth = Math.max(1.2, ry * 0.09);
-      for (const k of [-0.62, -0.3, 0, 0.3, 0.62]) {
+      // Image 1: Horizontal dark navy ray bands & outer navy border along the rounded paddle tail
+      ctx.strokeStyle = "rgba(13, 59, 130, 0.82)";
+      ctx.lineWidth = Math.max(1.4, ry * 0.085);
+      for (const k of [-0.66, -0.33, 0, 0.33, 0.66]) {
         ctx.beginPath();
-        ctx.moveTo(-tl * 0.14, k * wy * 0.9);
-        ctx.lineTo(-tl * 1.0, k * th * 0.85);
+        ctx.moveTo(-tl * 0.08, k * wy * 0.84);
+        ctx.lineTo(-tl * 0.98, k * th * 0.84);
         ctx.stroke();
       }
+      ctx.beginPath();
+      tailPath();
+      ctx.closePath();
+      ctx.strokeStyle = "#0d3b82";
+      ctx.lineWidth = rim * 2.1;
+      ctx.stroke();
     }
     if (st === "boris") {
       // Image 2: rich golden-amber ray stripes on yellow fan tail + dark royal-blue base dot
@@ -778,8 +802,8 @@ export function renderFishCanvas(
   ctx.beginPath();
   tailPath();
   ctx.closePath();
-  ctx.strokeStyle = out(0.5);
-  ctx.lineWidth = rim * 0.9;
+  ctx.strokeStyle = out(st === "parrot" ? 0.32 : 0.5);
+  ctx.lineWidth = rim * (st === "parrot" ? 0.65 : 0.9);
   ctx.stroke();
   if (st === "layla") {
     // Image 5: Long needle-sharp emerald-green lyre filaments extending straight back from top & bottom tail tips
@@ -1466,28 +1490,28 @@ export function renderFishCanvas(
       gDn
     );
   } else if (st === "parrot") {
-    // Image 3: Long sweeping turquoise-blue & emerald-banded rounded dorsal and anal fins
+    // Image 1: Long sweeping rounded emerald-teal dorsal & anal fins with deep navy-cobalt outer margin
     fin(
       () => {
-        ctx.moveTo(X(0.32), V(-0.88));
-        ctx.bezierCurveTo(X(-0.08), V(-1.24), X(-0.6), V(-1.3), X(-0.82) + sw, V(-0.94));
-        ctx.quadraticCurveTo(X(-0.78), V(-0.56), X(-0.74), V(-0.28));
+        ctx.moveTo(X(0.4), V(-0.88));
+        ctx.bezierCurveTo(X(0.02), V(-1.34), X(-0.56), V(-1.36), X(-0.82) + sw, V(-0.9));
+        ctx.quadraticCurveTo(X(-0.84), V(-0.52), X(-0.7), V(-0.28));
       },
-      "#18b8e0",
-      "#0b6276",
+      "#0d3b82",
+      "#149860",
       gUp,
-      { rays: rays(X(0.22), V(-0.88), X(-0.72), V(-0.42), X(-0.1), V(-1.22), X(-0.82), V(-0.94), 9), margin: "#125c88", marginW: 2.0 }
+      { rays: rays(X(0.28), V(-0.88), X(-0.66), V(-0.46), X(-0.08), V(-1.3), X(-0.8), V(-0.9), 9), margin: "#0d3b82", marginW: 2.3 }
     );
     fin(
       () => {
-        ctx.moveTo(X(-0.14), V(0.86));
-        ctx.bezierCurveTo(X(-0.34), V(1.26), X(-0.68), V(1.26), X(-0.82) + sw, V(0.88));
-        ctx.quadraticCurveTo(X(-0.78), V(0.54), X(-0.74), V(0.28));
+        ctx.moveTo(X(0.02), V(0.84));
+        ctx.bezierCurveTo(X(-0.22), V(1.24), X(-0.62), V(1.26), X(-0.8) + sw, V(0.82));
+        ctx.quadraticCurveTo(X(-0.78), V(0.48), X(-0.72), V(0.26));
       },
-      "#18b8e0",
-      "#0b6276",
+      "#0d3b82",
+      "#149860",
       gDn,
-      { rays: rays(X(-0.2), V(0.86), X(-0.72), V(0.42), X(-0.4), V(1.22), X(-0.82), V(0.88), 6), margin: "#125c88", marginW: 2.0 }
+      { rays: rays(X(-0.04), V(0.82), X(-0.66), V(0.44), X(-0.28), V(1.2), X(-0.78), V(0.8), 6), margin: "#0d3b82", marginW: 2.3 }
     );
   } else {
     // Grouper (and any other perch-like fish): spiny serrated front dorsal + rounded soft rear lobe
@@ -1751,33 +1775,70 @@ export function renderFishCanvas(
     ctx.arc(X(-0.86), V(0.0), ry * 0.14, 0, Math.PI * 2);
     ctx.fill();
   } else if (st === "parrot") {
-    // Image 3: Vibrant ocean cyan-blue head fading smoothly into emerald-green body + vertical wavy dark-green chevron stripes!
-    const hg = ctx.createLinearGradient(X(0.1), 0, X(0.85), 0);
-    hg.addColorStop(0, "rgba(0, 168, 216, 0)");
-    hg.addColorStop(0.45, "rgba(0, 168, 216, 0.85)");
-    hg.addColorStop(1, "#0098d8");
-    ctx.fillStyle = hg;
-    ctx.fillRect(X(-0.2), V(-1.2), rx * 1.6, ry * 2.4);
-
-    // Thick aqua-blue lips highlight
-    ctx.fillStyle = "#5cf2ff";
-    ctx.beginPath();
-    ctx.ellipse(jaw.upperTipX - rx * 0.04, jaw.upperTipY, rx * 0.1, ry * 0.08, 0, 0, Math.PI * 2);
-    ctx.ellipse(jaw.lowerTipX - rx * 0.04, jaw.lowerTipY + ry * 0.04, rx * 0.09, ry * 0.075, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Wavy vertical zigzag chevron stripes along the green body
-    ctx.strokeStyle = rgbaHex(pal.spot || "#06562a", 0.72);
-    ctx.lineWidth = Math.max(1.1, rx * 0.032);
-    for (let c = 0; c < 6; c++) {
-      const u = 0.18 - c * 0.17;
+    // Image 1: Napoleon Wrasse — 10 dark-green wavy zigzags painted FIRST, then diagonal cyan head + full cyan forehead crown + deep cobalt chin OVER front!
+    ctx.strokeStyle = rgbaHex(pal.spot || "#095424", 0.72);
+    ctx.lineWidth = Math.max(1.0, rx * 0.025);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (let c = 0; c < 10; c++) {
+      const u = 0.4 - c * 0.14;
       ctx.beginPath();
-      for (let s = 0; s <= 10; s++) {
-        const vv = -0.9 + s * 0.18;
-        const xx = X(u + (s % 2 ? 0.035 : -0.035));
+      for (let s = 0; s <= 12; s++) {
+        const vv = -0.9 + s * 0.15;
+        const xx = X(u + (s % 2 ? 0.028 : -0.028));
         if (s === 0) ctx.moveTo(xx, V(vv));
         else ctx.lineTo(xx, V(vv));
       }
+      ctx.stroke();
+    }
+
+    // Diagonal turquoise-cyan head transition (paints over front zigzags so forehead & snout stay spotless)
+    const headDiag = ctx.createLinearGradient(X(0.1), V(-0.2), X(0.56), V(0.06));
+    headDiag.addColorStop(0, "rgba(20, 180, 216, 0)");
+    headDiag.addColorStop(0.42, "rgba(20, 180, 216, 0.88)");
+    headDiag.addColorStop(0.72, "#14b4d8");
+    headDiag.addColorStop(1, "#1cd0ea");
+    ctx.fillStyle = headDiag;
+    ctx.fillRect(X(-0.02), V(-1.2), rx * 1.45, ry * 2.4);
+
+    // Extra cyan coverage across the entire overhanging bulbous forehead hump
+    const crownG = ctx.createRadialGradient(X(0.56), V(-0.78), ry * 0.08, X(0.52), V(-0.68), rx * 0.56);
+    crownG.addColorStop(0, "#14b8dc");
+    crownG.addColorStop(0.64, "rgba(20, 174, 216, 0.88)");
+    crownG.addColorStop(1, "rgba(20, 174, 216, 0)");
+    ctx.fillStyle = crownG;
+    ctx.fillRect(X(-0.02), V(-1.2), rx * 1.2, ry * 1.15);
+
+    // Deep royal-cobalt lower cheek & chin shading (Image 1)
+    const cg = ctx.createRadialGradient(X(0.66), V(0.62), ry * 0.08, X(0.64), V(0.56), rx * 0.6);
+    cg.addColorStop(0, "rgba(14, 78, 184, 0.96)");
+    cg.addColorStop(0.6, "rgba(14, 78, 184, 0.76)");
+    cg.addColorStop(1, "rgba(14, 78, 184, 0)");
+    ctx.fillStyle = cg;
+    ctx.fillRect(X(0.02), V(-0.05), rx * 1.35, ry * 1.35);
+
+    // Curved cobalt operculum (gill cover) arc behind cheek
+    ctx.strokeStyle = "rgba(10, 59, 122, 0.74)";
+    ctx.lineWidth = Math.max(1.2, rx * 0.024);
+    ctx.beginPath();
+    ctx.moveTo(X(0.42), V(-0.24));
+    ctx.quadraticCurveTo(X(0.35), V(0.14), X(0.24), V(0.48));
+    ctx.stroke();
+
+    // Soft specular glow on the overhanging wen dome + subtle shadow in the concave brow dip
+    const wenHi = ctx.createRadialGradient(X(0.76), V(-0.8), ry * 0.02, X(0.76), V(-0.8), rx * 0.22);
+    wenHi.addColorStop(0, "rgba(135, 245, 255, 0.32)");
+    wenHi.addColorStop(1, "rgba(135, 245, 255, 0)");
+    ctx.fillStyle = wenHi;
+    ctx.fillRect(X(0.45), V(-1.05), rx * 0.6, ry * 0.5);
+
+    // Two subtle dark-teal nose wrinkle lines right above the thick upper lip (Image 1)
+    ctx.strokeStyle = "rgba(7, 60, 88, 0.65)";
+    ctx.lineWidth = Math.max(1.0, rx * 0.018);
+    for (const d of [0, 0.05]) {
+      ctx.beginPath();
+      ctx.moveTo(X(0.95 + d), V(-0.15 + d * 0.4));
+      ctx.quadraticCurveTo(X(1.0 + d), V(-0.09 + d * 0.3), X(1.03 + d), V(-0.01 + d * 0.2));
       ctx.stroke();
     }
   } else if (st === "layla") {
@@ -2167,8 +2228,8 @@ export function renderFishCanvas(
     for (const s of sp.stripes) band(s, 0.19, 0, pal.stripe || "#ffffff");
   }
 
-  // gill cover (operculum) crease — fish only (skipped on sharks, orca, leon & idol so markings stay spotless!)
-  if (W >= 48 && st !== "orca" && st !== "shark" && st !== "leopard" && st !== "leon" && st !== "idol") {
+  // gill cover (operculum) crease — fish only (skipped on sharks, orca, leon, idol & parrot so markings stay spotless!)
+  if (W >= 48 && st !== "orca" && st !== "shark" && st !== "leopard" && st !== "leon" && st !== "idol" && st !== "parrot") {
     const gx = X(disc ? 0.5 : st === "barracuda" || st === "sailfish" ? 0.5 : 0.36);
     ctx.beginPath();
     ctx.moveTo(gx + rx * 0.04, -ry * 0.34);
@@ -2234,8 +2295,8 @@ export function renderFishCanvas(
   ctx.restore(); // end body clip
 
   buildBodyPath(ctx, sp, bx, rx, ry, jawState);
-  ctx.lineWidth = rim;
-  ctx.strokeStyle = out(0.68);
+  ctx.lineWidth = st === "parrot" ? rim * 0.65 : rim;
+  ctx.strokeStyle = out(st === "parrot" ? 0.36 : 0.68);
   ctx.stroke();
 
   if (st === "leon" && detail) {
@@ -2382,6 +2443,12 @@ export function renderFishCanvas(
       ctx.moveTo(jaw.closedTipX, jaw.closedTipY);
       ctx.quadraticCurveTo((jaw.closedTipX + jaw.hingeX) * 0.5, jaw.hingeY + ry * 0.04, jaw.hingeX, jaw.hingeY + ry * 0.14);
       ctx.stroke();
+    } else if (st === "parrot") {
+      // Image 1: Thick puckered turquoise-cyan Napoleon lips around a gentle smile
+      ctx.beginPath();
+      ctx.moveTo(jaw.closedTipX + rx * 0.04, jaw.closedTipY);
+      ctx.quadraticCurveTo((jaw.closedTipX + jaw.hingeX) * 0.5, jaw.hingeY + ry * 0.06, jaw.hingeX, jaw.hingeY);
+      ctx.stroke();
     } else {
       const overbite = st === "andy" || st === "boris";
       const tipX = overbite ? jaw.lowerTipX + rx * 0.02 : jaw.closedTipX;
@@ -2390,6 +2457,38 @@ export function renderFishCanvas(
       ctx.beginPath();
       ctx.moveTo(tipX, tipY);
       ctx.quadraticCurveTo((tipX + jaw.hingeX) * 0.5, (tipY + jaw.hingeY) * 0.5 + smileDip, jaw.hingeX, jaw.hingeY);
+      ctx.stroke();
+    }
+  }
+
+  // Thick protruding fleshy puckered Napoleon lips (visible both closed and open!)
+  if (st === "parrot") {
+    const drawLip = (lx: number, ly: number, rLx: number, rLy: number, ang: number, isUpper: boolean) => {
+      ctx.save();
+      ctx.translate(lx, ly);
+      ctx.rotate(ang);
+      const lg = ctx.createRadialGradient(-rLx * 0.15, isUpper ? -rLy * 0.25 : rLy * 0.2, rLy * 0.08, 0, 0, rLx * 1.15);
+      lg.addColorStop(0, isUpper ? "#6cf5ff" : "#56ebfc");
+      lg.addColorStop(0.55, "#24c6e0");
+      lg.addColorStop(1, isUpper ? "#1284b0" : "#0e54b4");
+      ctx.fillStyle = lg;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rLx, rLy, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(10, 74, 114, 0.28)";
+      ctx.lineWidth = Math.max(0.8, rim * 0.45);
+      ctx.stroke();
+      ctx.restore();
+    };
+    drawLip(jaw.upperTipX - rx * 0.02, jaw.upperTipY - ry * 0.03, rx * 0.125, ry * 0.115, 0.36 - open * 0.42, true);
+    drawLip(jaw.lowerTipX - rx * 0.022, jaw.lowerTipY + ry * 0.048, rx * 0.122, ry * 0.112, -0.26 + open * 0.68, false);
+    if (mouthOpenAmt === 0) {
+      ctx.strokeStyle = "rgba(8, 56, 88, 0.82)";
+      ctx.lineWidth = Math.max(1.3, rim * 0.95);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(jaw.closedTipX + rx * 0.048, jaw.closedTipY);
+      ctx.quadraticCurveTo((jaw.closedTipX + jaw.hingeX) * 0.5, jaw.hingeY + ry * 0.05, jaw.hingeX, jaw.hingeY);
       ctx.stroke();
     }
   }
@@ -2574,18 +2673,25 @@ export function renderFishCanvas(
   } else {
     ctx.save();
     const slim = st === "barracuda" || st === "minnow" || st === "sailfish";
-    ctx.translate(X(disc ? 0.24 : st === "parrot" ? 0.22 : slim ? 0.3 : 0.08), ry * (disc ? 0.34 : st === "parrot" ? 0.24 : slim ? 0.4 : 0.28));
-    ctx.rotate(0.32 + pFlutter * (st === "puffer" ? 2.4 : 1)); // the puffer sculls with fast-fluttering fins
-    const pk = slim ? 0.7 : st === "parrot" ? 0.88 : 1;
+    ctx.translate(X(disc ? 0.24 : st === "parrot" ? 0.2 : slim ? 0.3 : 0.08), ry * (disc ? 0.34 : st === "parrot" ? 0.24 : slim ? 0.4 : 0.28));
+    ctx.rotate((st === "parrot" ? 0.14 : 0.32) + pFlutter * (st === "puffer" ? 2.4 : 1)); // the puffer sculls with fast-fluttering fins
+    const pk = slim ? 0.7 : st === "parrot" ? 1.05 : 1;
     const ph = slim ? Math.max(ry, rx * 0.22) : ry;
     ctx.beginPath();
-    ctx.moveTo(0, -ph * 0.07);
-    ctx.bezierCurveTo(-rx * 0.18 * pk, -ph * 0.2, -rx * 0.42 * pk, -ph * 0.12, -rx * 0.4 * pk, ph * 0.08);
-    ctx.bezierCurveTo(-rx * 0.36 * pk, ph * 0.26, -rx * 0.14 * pk, ph * 0.22, 0, ph * 0.09);
+    if (st === "parrot") {
+      // Image 1: Broad rounded fan-paddle pectoral fin behind the cheek/gill
+      ctx.moveTo(0, -ph * 0.09);
+      ctx.bezierCurveTo(-rx * 0.16 * pk, -ph * 0.28, -rx * 0.38 * pk, -ph * 0.22, -rx * 0.4 * pk, ph * 0.02);
+      ctx.bezierCurveTo(-rx * 0.38 * pk, ph * 0.28, -rx * 0.16 * pk, ph * 0.3, 0, ph * 0.1);
+    } else {
+      ctx.moveTo(0, -ph * 0.07);
+      ctx.bezierCurveTo(-rx * 0.18 * pk, -ph * 0.2, -rx * 0.42 * pk, -ph * 0.12, -rx * 0.4 * pk, ph * 0.08);
+      ctx.bezierCurveTo(-rx * 0.36 * pk, ph * 0.26, -rx * 0.14 * pk, ph * 0.22, 0, ph * 0.09);
+    }
     ctx.closePath();
     const pg = ctx.createLinearGradient(0, 0, -rx * 0.42, ry * 0.1);
-    pg.addColorStop(0, rgbaHex(st === "parrot" ? "#4ae880" : finDark, 0.9));
-    pg.addColorStop(1, st === "tang" ? rgbaHex(pal.spot || "#ffd91f", 0.95) : st === "parrot" ? "#0b4696" : rgbaHex(finLight, 0.52));
+    pg.addColorStop(0, rgbaHex(st === "parrot" ? "#62e098" : finDark, 0.94));
+    pg.addColorStop(1, st === "tang" ? rgbaHex(pal.spot || "#ffd91f", 0.95) : st === "parrot" ? "#145ea0" : rgbaHex(finLight, 0.52));
     ctx.fillStyle = pg;
     ctx.fill();
     if (detail) {
@@ -2609,7 +2715,7 @@ export function renderFishCanvas(
   }
 
   // ---------- 7. EYE (kept in the game's signature glossy 3/4 cartoon style) ----------
-  const ex = X(st === "layla" ? 0.54 : st === "idol" ? 0.42 : st === "boris" ? 0.66 : st === "leon" ? 0.48 : st === "peter" ? 0.62 : st === "clown" ? 0.68 : st === "eddy" ? 0.36 : st === "parrot" ? 0.62 : st === "andy" ? 0.56 : disc ? 0.75 : st === "orca" ? 0.68 : st === "barracuda" ? 0.72 : st === "shark" ? 0.8 : st === "leopard" ? 0.68 : st === "sailfish" ? 0.78 : longBody ? 0.64 : 0.6);
+  const ex = X(st === "layla" ? 0.54 : st === "idol" ? 0.42 : st === "boris" ? 0.66 : st === "leon" ? 0.48 : st === "peter" ? 0.62 : st === "clown" ? 0.68 : st === "eddy" ? 0.36 : st === "parrot" ? 0.53 : st === "andy" ? 0.56 : disc ? 0.75 : st === "orca" ? 0.68 : st === "barracuda" ? 0.72 : st === "shark" ? 0.8 : st === "leopard" ? 0.68 : st === "sailfish" ? 0.78 : longBody ? 0.64 : 0.6);
   const ey =
     -ry *
     (st === "layla"
@@ -2623,7 +2729,7 @@ export function renderFishCanvas(
             : st === "eddy"
               ? 0.32 + open * 0.08
               : st === "parrot"
-                ? 0.24 + open * 0.08
+                ? 0.38 + open * 0.04
                 : st === "leon"
                   ? 0.5 + open * 0.04
                   : st === "andy"
@@ -2716,6 +2822,15 @@ export function renderFishCanvas(
       ctx.beginPath();
       ctx.rect(-eyeRx * 1.4, -eyeRy * 1.3, eyeRx * 2.8, eyeRy * 0.96);
       ctx.fillStyle = pal.stripe || "#1b0b26";
+      ctx.fill();
+    } else if (st === "parrot") {
+      // Image 1: Calm turquoise-cyan upper eyelid fold matching the head tone above the Napoleon eye
+      ctx.beginPath();
+      ctx.moveTo(-eyeRx * 1.2, -eyeRy * 1.1);
+      ctx.quadraticCurveTo(0, -eyeRy * 0.58, eyeRx * 1.25, -eyeRy * 0.72);
+      ctx.lineTo(eyeRx * 1.25, -eyeRy * 1.3);
+      ctx.closePath();
+      ctx.fillStyle = "#129ac0";
       ctx.fill();
     } else if (st === "shark") {
       // Image 7: Bruce's charismatic expressive brow shadow over upper-inner eye
@@ -2814,9 +2929,9 @@ function measureOpaqueBounds(cv: HTMLCanvasElement): { minX: number; minY: numbe
     minY = h,
     maxX = -1,
     maxY = -1;
-  for (let y = 0; y < h; y++) {
+  for (let y = 0; y < h; y += 2) {
     const row = y * w * 4;
-    for (let x = 0; x < w; x++) {
+    for (let x = 0; x < w; x += 2) {
       if (data[row + x * 4 + 3] > 10) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
@@ -2826,7 +2941,12 @@ function measureOpaqueBounds(cv: HTMLCanvasElement): { minX: number; minY: numbe
     }
   }
   if (maxX < minX || maxY < minY) return { minX: 0, minY: 0, maxX: w - 1, maxY: h - 1 };
-  return { minX, minY, maxX, maxY };
+  return {
+    minX: Math.max(0, minX - 1),
+    minY: Math.max(0, minY - 1),
+    maxX: Math.min(w - 1, maxX + 1),
+    maxY: Math.min(h - 1, maxY + 1),
+  };
 }
 
 function cropCanvas(cv: HTMLCanvasElement, box: { minX: number; minY: number; maxX: number; maxY: number }, pad = 4): HTMLCanvasElement {
@@ -2867,6 +2987,18 @@ export function spritePreviewFrames(sp: Species, size = 240, states: JawState[])
     out[item.st] = cropCanvas(item.cv, box, 5).toDataURL();
   }
   return out as Record<JawState, string>;
+}
+
+export function spritePreviewFrameSingle(
+  sp: Species,
+  size: number,
+  st: JawState,
+  tf: number,
+  sharedBox?: { minX: number; minY: number; maxX: number; maxY: number }
+): { canvas: HTMLCanvasElement; box: { minX: number; minY: number; maxX: number; maxY: number } } {
+  const cv = renderFishCanvas(sp, size, st, tf % TAIL_FRAMES, false, st === -1 ? "happy" : "normal");
+  const box = sharedBox || measureOpaqueBounds(cv);
+  return { canvas: cropCanvas(cv, box, 10), box };
 }
 
 export function spriteAnimPreviewCanvases(sp: Species, size = 240, cycle: JawState[]): HTMLCanvasElement[] {

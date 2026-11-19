@@ -38,9 +38,10 @@ function makeTeethMat(track: <T extends { dispose: () => void }>(x: T) => T) {
     new THREE.MeshPhysicalMaterial({
       color: "#fffcf2",
       emissive: "#fffcf2",
-      emissiveIntensity: 0.24,
-      roughness: 0.2,
-      clearcoat: 0.6,
+      emissiveIntensity: 0.14,
+      roughness: 0.48,
+      clearcoat: 0.06,
+      envMapIntensity: 0.08,
     })
   );
 }
@@ -100,7 +101,7 @@ function createMinnow3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
           [0.08, -0.146],
           [0.19, -0.125],
           [0.29, -0.068],
-          [xSnout, -0.012],
+          [xSnout, -0.016],
         ],
       ],
       20
@@ -135,7 +136,7 @@ function createMinnow3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     [1, rgbaHex(D, 0)],
   ]);
   bc.fillRect(-0.4, -0.2, 0.85, 0.22);
-  drawGlow(bc, 0.04, -0.06, 0.22, 0.045, -0.06, "255,255,255", 0.34);
+  drawGlow(bc, 0.04, -0.06, 0.22, 0.045, -0.06, "255,255,255", 0.14);
 
   // Bright silver/yellow/cyan lateral band matching sprites.ts
   bc.strokeStyle = STR ? rgbaHex(STR, isLentera ? 0.92 : 0.94) : "rgba(232, 255, 255, 0.86)";
@@ -180,7 +181,7 @@ function createMinnow3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const hy = -0.012;
   const evalUpperPalate = (x: number) => {
     const t = clamp((x - (hx - 0.01)) / (xSnout - (hx - 0.01)), 0, 1);
-    return -0.012 + 0.022 * t;
+    return -0.012 + 0.008 * t;
   };
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx, 0.032, 0.014);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
@@ -231,7 +232,7 @@ function createMinnow3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       vSteps: 20,
       evalTopY: (x) => {
         const t = clamp((x - (hx - 0.01)) / (xSnout - 0.008 - (hx - 0.01)), 0, 1);
-        return -0.012 + 0.014 * t;
+        return -0.012 + 0.012 * t;
       },
       evalBotY: evalBot,
       evalHalfZ: (x, t) => evalZ(x, t) * 0.96,
@@ -432,11 +433,21 @@ function createMinnow3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     false,
     0.0011
   );
+  const pecZMinnow =
+    surfaceZAt(
+      evalTop,
+      evalUnifiedBot,
+      (x) => evalZ(x, clamp((x - xTail) / (xSnout - xTail), 0, 1)),
+      0.145,
+      -0.055,
+      0.22,
+      1.0
+    ) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.145, -0.055, 0.072);
+  pecLeft.position.set(0.145, -0.055, pecZMinnow);
   pecLeft.add(pecMatObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.145, -0.055, -0.072);
+  pecRight.position.set(0.145, -0.055, -pecZMinnow);
   pecRight.add(pecMatObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -596,7 +607,7 @@ function createPierre3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   bc.fillRect(-0.42, -0.26, 0.88, 0.52);
 
   // Forehead & shoulder specular glow
-  drawGlow(bc, 0.04, -0.09, 0.2, 0.06, -0.15, "255,255,255", 0.34);
+  drawGlow(bc, 0.04, -0.09, 0.2, 0.06, -0.15, "255,255,255", 0.14);
 
   // 30 signature haloed coral-grouper spots across head & flank
   for (let i = 0; i < 30; i++) {
@@ -640,7 +651,7 @@ function createPierre3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const hy = -0.025;
   const evalUpperPalate = (x: number) => {
     const t = clamp((x - (hx - 0.012)) / (xSnout - (hx - 0.012)), 0, 1);
-    return -0.025 + 0.038 * t;
+    return -0.025 + 0.024 * t;
   };
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx, 0.032, 0.014);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
@@ -933,11 +944,21 @@ function createPierre3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     false,
     0.0012
   );
+  const pecZPierre =
+    surfaceZAt(
+      evalTop,
+      evalUnifiedBot,
+      (x) => evalZ(x, clamp((x - xTail) / (xSnout - xTail), 0, 1)),
+      0.095,
+      -0.068,
+      0.22,
+      1.0
+    ) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.095, -0.068, 0.1);
+  pecLeft.position.set(0.095, -0.068, pecZPierre);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.095, -0.068, -0.1);
+  pecRight.position.set(0.095, -0.068, -pecZPierre);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -1139,7 +1160,7 @@ function createLeon3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const evalBot = (x: number) => interpCurveY(botPts, x);
   const evalUpperPalate = (x: number) => {
     const t = clamp((x - (hx - 0.012)) / (ux3 - (hx - 0.012)), 0, 1);
-    return hy + 0.006 * t;
+    return hy - 0.010 * t;
   };
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx, 0.032, 0.014);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
@@ -1517,11 +1538,12 @@ function createLeon3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     0.001,
     { transparent: true, opacity: 0.92 }
   );
+  const pecZLeon = surfaceZAt(evalTop, evalUnifiedBot, evalZ, pecOx, pecOy, 0.22, 1.0) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(pecOx, pecOy, 0.088);
+  pecLeft.position.set(pecOx, pecOy, pecZLeon);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(pecOx, pecOy, -0.088);
+  pecRight.position.set(pecOx, pecOy, -pecZLeon);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -1652,7 +1674,7 @@ function createPeter3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
           [0.09, -0.228],
           [0.2, -0.205],
           [0.285, -0.145],
-          [xSnoutL, -0.068],
+          [xSnoutL, -0.076],
         ],
       ],
       22
@@ -1681,7 +1703,7 @@ function createPeter3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   ]);
   bc.fillRect(-0.36, -0.3, 0.8, 0.6);
 
-  drawGlow(bc, 0.02, -0.11, 0.18, 0.065, -0.12, "255,255,255", 0.28);
+  drawGlow(bc, 0.02, -0.11, 0.18, 0.065, -0.12, "255,255,255", 0.13);
 
   // 3 Wavy Longitudinal Golden Bands matching sprites.ts peter!
   bc.fillStyle = GOLD;
@@ -1754,7 +1776,7 @@ function createPeter3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const hy = -0.062;
   const evalUpperPalate = (x: number) => {
     const t = clamp((x - (hx - 0.012)) / (xSnoutU - (hx - 0.012)), 0, 1);
-    return hy + 0.02 * t;
+    return hy + 0.019 * t;
   };
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx, 0.032, 0.014);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
@@ -2066,11 +2088,21 @@ function createPeter3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     false,
     0.0011
   );
+  const pecZPeter =
+    surfaceZAt(
+      evalTop,
+      evalUnifiedBot,
+      (x) => evalZ(x, clamp((x - xTail) / (xSnoutU - xTail), 0, 1)),
+      0.045,
+      -0.068,
+      0.22,
+      1.0
+    ) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.045, -0.068, 0.078);
+  pecLeft.position.set(0.045, -0.068, pecZPeter);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.045, -0.068, -0.078);
+  pecRight.position.set(0.045, -0.068, -pecZPeter);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -2131,128 +2163,149 @@ function createPuffer3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const FIN = pal.fin; // #ffd970
   const SPOT = pal.spot || "#6b4312";
 
-  const ctx = createRigContext(OL, "#565656");
+  const ctx = createRigContext(OL, "#c8c8c8");
   const { track, uniforms, makeOutlineMat, makeFishMat } = ctx;
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
   const scaleGroup = new THREE.Group();
   bodyGroup.add(scaleGroup);
 
-  const xTail = -0.255;
-  const xHead = 0.18;
-  const xSnout = 0.285;
+  const xTail = -0.242;
+  const xSnout = 0.258;
 
+  // Plump, chubby pear-globe puffer silhouette with rounded forehead & chin (no pointy beak or sharp chin corner)
   const topPts = sortAscX(
     sampleBezierChain(
       [
         [
-          [xTail, 0.042],
-          [-0.17, 0.16],
-          [-0.04, 0.238],
-          [0.075, 0.242],
+          [xTail, 0.044],
+          [-0.178, 0.168],
+          [-0.068, 0.236],
+          [0.035, 0.238],
         ],
         [
-          [0.075, 0.242],
-          [0.175, 0.23],
-          [0.25, 0.15],
-          [xSnout, 0.012],
+          [0.035, 0.238],
+          [0.156, 0.232],
+          [0.244, 0.148],
+          [xSnout, -0.002],
         ],
       ],
-      22
+      28
     )
   );
   const botPts = sortAscX(
     sampleBezierChain(
       [
         [
-          [xTail, -0.042],
-          [-0.17, -0.155],
-          [-0.04, -0.232],
-          [0.075, -0.236],
+          [xTail, -0.044],
+          [-0.178, -0.162],
+          [-0.068, -0.228],
+          [0.035, -0.232],
         ],
         [
-          [0.075, -0.236],
-          [0.175, -0.22],
-          [0.25, -0.14],
-          [xSnout, -0.014],
+          [0.035, -0.232],
+          [0.156, -0.222],
+          [0.242, -0.145],
+          [xSnout - 0.002, -0.028],
         ],
       ],
-      22
+      28
     )
   );
 
-  const evalZ = (x: number, t: number) => {
-    const base = 0.032 + 0.195 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
-    return x > 0.2 ? base * clamp(1 - (x - 0.2) / 0.12, 0.48, 1) : base;
+  // Smooth full-cheeked ellipsoid breadth tapering gently into the rounded nose and tail peduncle
+  const evalZ = (_x: number, t: number) => {
+    const u = clamp(t, 0, 1);
+    const arc = Math.sin(Math.pow(u, 0.72) * Math.PI);
+    return 0.034 + 0.194 * Math.pow(Math.max(0, arc), 0.56);
   };
 
-  const { mapUV, beginCanvas2D } = createWorldMapper(-0.29, 0.32, -0.26, 0.26, 512);
+  const { mapUV, beginCanvas2D } = createWorldMapper(-0.28, 0.3, -0.26, 0.26, 512);
 
-  // Paint Golden Puffer Coat + 3 Brown Saddles + 18 Spots + Flat Skin Spines matching sprites.ts
+  // Paint rich matte-satin golden puffer skin with feathered dorsal saddles, spots, belly creases & rosy cheek blush
   const bodyCv = document.createElement("canvas");
   bodyCv.width = 512;
   bodyCv.height = 512;
   const bc = bodyCv.getContext("2d")!;
   beginCanvas2D(bc, 0, 0);
 
-  bc.fillStyle = makeLin(bc, 0, -0.24, 0, 0.24, [
-    [0, D],
-    [0.36, B],
-    [0.68, mixHex(B, BEL, 0.55)],
-    [1, BEL],
+  bc.fillStyle = makeLin(bc, 0, -0.23, 0, 0.23, [
+    [0, mixHex(D, "#8f5d14", 0.25)],
+    [0.26, D],
+    [0.54, B],
+    [0.8, mixHex(B, BEL, 0.56)],
+    [1, mixHex(BEL, "#f5dc9c", 0.48)],
   ]);
   bc.fillRect(-0.36, -0.3, 0.76, 0.6);
 
-  drawGlow(bc, 0.04, -0.1, 0.17, 0.06, -0.14, "255,255,255", 0.36);
+  // Soft warm forehead bloom (matte, no harsh white glare)
+  drawGlow(bc, 0.04, -0.1, 0.15, 0.055, -0.1, "255,232,160", 0.12);
 
-  // 3 Brown dorsal saddle blotches
-  bc.fillStyle = rgbaHex(SPOT, 0.56);
-  for (const [sx, sy, rx0, ry0] of [
-    [0.07, -0.15, 0.046, 0.034],
-    [-0.048, -0.17, 0.054, 0.038],
-    [-0.155, -0.12, 0.04, 0.028],
-  ]) {
-    drawBlob(bc, sx, sy, rx0, ry0, 0);
+  // Feathered dorsal saddle bands matching Porcupine Puffer markings
+  for (const [sx, sy, rx0, ry0, rot] of [
+    [0.078, -0.145, 0.044, 0.032, 0.22],
+    [-0.045, -0.175, 0.056, 0.036, -0.06],
+    [-0.152, -0.12, 0.04, 0.028, -0.25],
+  ] as [number, number, number, number, number][]) {
+    bc.save();
+    bc.translate(sx, sy);
+    bc.rotate(rot);
+    bc.scale(1, ry0 / rx0);
+    const sg = bc.createRadialGradient(0, 0, rx0 * 0.18, 0, 0, rx0);
+    sg.addColorStop(0, rgbaHex(SPOT, 0.62));
+    sg.addColorStop(0.68, rgbaHex(SPOT, 0.42));
+    sg.addColorStop(1, rgbaHex(SPOT, 0));
+    bc.fillStyle = sg;
+    bc.beginPath();
+    bc.arc(0, 0, rx0, 0, Math.PI * 2);
+    bc.fill();
+    bc.restore();
   }
 
-  // 18 warm brown spots
-  bc.fillStyle = rgbaHex(SPOT, 0.82);
-  for (let i = 0; i < 18; i++) {
-    const sx = -0.21 + ((i * 0.7548776662 + 0.2) % 1) * 0.36;
-    const sy = -0.18 + ((i * 0.5698402909 + 0.4) % 1) * 0.22;
+  // Varied warm chestnut spots across upper back & flanks (avoiding eye & belly)
+  const spots: [number, number, number][] = [
+    [-0.19, -0.05, 0.008],
+    [-0.15, -0.02, 0.011],
+    [-0.11, -0.1, 0.009],
+    [-0.09, -0.04, 0.012],
+    [-0.05, -0.09, 0.008],
+    [-0.02, -0.02, 0.01],
+    [0.01, -0.12, 0.011],
+    [0.03, -0.05, 0.008],
+    [0.06, -0.01, 0.009],
+    [0.08, -0.09, 0.011],
+    [0.11, -0.13, 0.0075],
+    [0.11, -0.04, 0.0085],
+    [-0.13, 0.03, 0.008],
+    [-0.06, 0.04, 0.0095],
+    [0.0, 0.03, 0.0085],
+    [0.05, 0.05, 0.007],
+  ];
+  for (const [sx, sy, sr] of spots) {
+    bc.fillStyle = rgbaHex(D, 0.35);
     bc.beginPath();
-    bc.arc(sx, sy, 0.0085, 0, Math.PI * 2);
+    bc.arc(sx, sy, sr * 1.45, 0, Math.PI * 2);
+    bc.fill();
+    bc.fillStyle = rgbaHex(SPOT, 0.85);
+    bc.beginPath();
+    bc.arc(sx, sy, sr, 0, Math.PI * 2);
     bc.fill();
   }
 
-  // Little cream micro-spines lying along the skin
-  bc.fillStyle = "#fff6dc";
-  bc.strokeStyle = rgbaHex(OL, 0.48);
-  bc.lineWidth = 0.0028;
-  for (let i = 0; i < 12; i++) {
-    const sx = -0.18 + ((i * 0.7548776662 + 0.1) % 1) * 0.28;
-    const sy = -0.14 + ((i * 0.5698402909 + 0.6) % 1) * 0.24;
+  // Cute rosy peach cheek blush under the eye
+  drawGlow(bc, 0.145, 0.018, 0.036, 0.024, 0.1, "244,126,92", 0.34);
+
+  // Subtle curved belly pleats along lower plump underside
+  bc.strokeStyle = rgbaHex(D, 0.22);
+  bc.lineWidth = 0.0042;
+  bc.lineCap = "round";
+  for (let i = 0; i < 4; i++) {
+    const py = 0.105 + i * 0.024;
     bc.beginPath();
-    bc.moveTo(sx, sy);
-    bc.lineTo(sx - 0.024, sy - 0.008);
-    bc.lineTo(sx - 0.005, sy + 0.015);
-    bc.closePath();
-    bc.fill();
+    bc.moveTo(-0.11 + i * 0.02, py);
+    bc.quadraticCurveTo(0.02, py + 0.018, 0.14 - i * 0.018, py - 0.004);
     bc.stroke();
   }
-
-  // Fused Ivory Beak Plates under cute snout smile
-  bc.fillStyle = "#fffaf0";
-  bc.strokeStyle = rgbaHex(OL, 0.78);
-  bc.lineWidth = 0.0036;
-  bc.beginPath();
-  bc.rect(0.242, 0.002, 0.028, 0.024);
-  bc.fill();
-  bc.stroke();
-  bc.beginPath();
-  bc.moveTo(0.256, 0.002);
-  bc.lineTo(0.256, 0.026);
-  bc.stroke();
 
   bc.restore();
 
@@ -2262,114 +2315,206 @@ function createPuffer3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const evalTop = (x: number) => interpCurveY(topPts, x);
   const evalBot = (x: number) => interpCurveY(botPts, x);
-  const hx = xHead;
-  const hy = -0.01;
-  const evalUpperPalate = (x: number) => {
-    const t = clamp((x - (hx - 0.012)) / (xSnout - (hx - 0.012)), 0, 1);
-    return hy + 0.014 * t;
-  };
-  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx, 0.032, 0.014);
-  const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
+  const hx = 0.238;
+  const hy = -0.016;
+  const evalMidY = (x: number) => (evalTop(x) + evalBot(x)) * 0.5;
 
+  // Seamless unbroken plump puffer globe (roundFront: false avoids double-pinching the front dome)
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: xTail,
       xEnd: xSnout,
-      uSteps: 48,
-      vSteps: 28,
+      uSteps: 54,
+      vSteps: 32,
       evalTopY: evalTop,
-      evalBotY: evalUnifiedBot,
+      evalBotY: evalBot,
       evalHalfZ: evalZ,
       mapUV,
-      roundFront: true,
+      roundFront: false,
       rearBulge: 0.006,
+      taper: (s) => 1 - 0.12 * s * s,
     })
   );
-  const bodyMat = makeFishMat(bodyTex);
+  const bodyMat = makeFishMat(bodyTex, {
+    roughness: 0.9,
+    clearcoat: 0,
+    envMapIntensity: 0.04,
+    emissiveIntensity: 0.12,
+  });
   injectSpineShader(bodyMat, uniforms, 0, 0);
   const pufferMask = bodySpineOutlineMask(
     evalMidY,
     [
       { x0: -0.215, x1: -0.105, top: true },
-      { x0: -0.215, x1: -0.11, top: false },
+      { x0: -0.215, x1: -0.108, top: false },
     ],
     0.028
   );
   scaleGroup.add(
     new THREE.Mesh(bodyGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.004, pufferMask)), makeOutlineMat(0, 0))
+    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0036, pufferMask)), makeOutlineMat(0, 0))
   );
 
-  // Unified cranium owns upper snout; upperJawGroup kept as empty compat group
+  // Cute rounded puckered upper lip cushion curving along the front snout contour
+  const lipMat = track(
+    new THREE.MeshPhysicalMaterial({
+      color: mixHex(B, "#ffe2a6", 0.38),
+      emissive: mixHex(B, "#ffe2a6", 0.38),
+      emissiveIntensity: 0.12,
+      roughness: 0.88,
+      clearcoat: 0,
+      envMapIntensity: 0.04,
+    })
+  );
+  const upperLipCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0.246, hy - 0.002, -0.032),
+    new THREE.Vector3(0.258, hy + 0.008, -0.017),
+    new THREE.Vector3(0.264, hy + 0.012, 0),
+    new THREE.Vector3(0.258, hy + 0.008, 0.017),
+    new THREE.Vector3(0.246, hy - 0.002, 0.032),
+  ]);
+  const upperLipGeo = track(new THREE.TubeGeometry(upperLipCurve, 20, 0.0072, 10, false));
+  const upperLipMesh = new THREE.Mesh(upperLipGeo, lipMat);
+  const upperLipOl = new THREE.Mesh(
+    track(buildOutlineGeometry(upperLipGeo, 0.0014, jawOutlineMask(0.248, 0.258))),
+    makeOutlineMat(0, 0, false)
+  );
+  upperLipMesh.add(upperLipOl);
+  scaleGroup.add(upperLipMesh);
+
   const upperJawGroup = new THREE.Group();
   upperJawGroup.position.set(hx, hy, 0);
   scaleGroup.add(upperJawGroup);
 
+  // Compact rounded lower lip arch hinged cleanly at (hx, hy) so opening forms a cute puffer "O" mouth
   const lowerJawGroup = new THREE.Group();
   lowerJawGroup.position.set(hx, hy, 0);
   scaleGroup.add(lowerJawGroup);
-  const lGeo = track(
-    buildLoftedSurface({
-      xStart: hx - 0.02,
-      xEnd: xSnout - 0.006,
-      uSteps: 18,
-      vSteps: 22,
-      evalTopY: (x) => {
-        const t = clamp((x - (hx - 0.012)) / (xSnout - 0.006 - (hx - 0.012)), 0, 1);
-        return hy + 0.002 * t;
-      },
-      evalBotY: evalBot,
-      evalHalfZ: (x, t) => evalZ(x, t) * 0.96,
-      mapUV,
-      localOffsetX: hx,
-      localOffsetY: hy,
-      roundFront: true,
-      rearInsetAt: (x) => (x < hx ? 0.78 + 0.2 * clamp((x - (hx - 0.02)) / 0.02, 0, 1) : 1),
-    })
+
+  const lowerLipCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0.246 - hx, -0.001, -0.03),
+    new THREE.Vector3(0.257 - hx, -0.009, -0.016),
+    new THREE.Vector3(0.263 - hx, -0.012, 0),
+    new THREE.Vector3(0.257 - hx, -0.009, 0.016),
+    new THREE.Vector3(0.246 - hx, -0.001, 0.03),
+  ]);
+  const lowerLipGeo = track(new THREE.TubeGeometry(lowerLipCurve, 20, 0.0068, 10, false));
+  const lowerLipMesh = new THREE.Mesh(lowerLipGeo, lipMat);
+  const lowerLipOl = new THREE.Mesh(
+    track(buildOutlineGeometry(lowerLipGeo, 0.0014, jawOutlineMask(0.248 - hx, 0.258 - hx))),
+    makeOutlineMat(hx, hy, false)
   );
-  lowerJawGroup.add(
-    new THREE.Mesh(lGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0038, jawOutlineMask(0.008, 0.044))), makeOutlineMat(hx, hy))
-  );
+  lowerLipMesh.add(lowerLipOl);
+  lowerJawGroup.add(lowerLipMesh);
+
+  // Twin rounded ivory buck-tooth beak plates tucked neatly inside the lip ring
+  const beakMat = makeTeethMat(track);
+  const beakOlMat = track(new THREE.MeshBasicMaterial({ color: OL, side: THREE.BackSide }));
+  const addRoundedTooth = (parent: THREE.Object3D, bx: number, by: number, rx0: number, ry0: number, rz0: number, gapZ: number) => {
+    const tGeo = track(new THREE.SphereGeometry(1, 12, 10));
+    tGeo.scale(rx0, ry0, rz0);
+    const tOlGeo = track(buildOutlineGeometry(tGeo, 0.0011));
+    for (const side of [1, -1]) {
+      const m = new THREE.Mesh(tGeo, beakMat);
+      m.position.set(bx, by, side * gapZ);
+      m.add(new THREE.Mesh(tOlGeo, beakOlMat));
+      parent.add(m);
+    }
+  };
+  addRoundedTooth(scaleGroup, 0.261, hy + 0.003, 0.0044, 0.0052, 0.006, 0.0066);
+  addRoundedTooth(lowerJawGroup, 0.26 - hx, -0.004, 0.0038, 0.0042, 0.0054, 0.0058);
 
   const { mouthInterior, tongueMesh } = createOralParts(
     ctx,
-    bodyGroup,
+    scaleGroup,
     lowerJawGroup,
-    hx,
+    0.244,
     hy,
-    "#521022",
+    "#4a0d1d",
     "#ec6a8e",
-    [0.038, 0.034, 0.028],
-    [0.03, 0.011, 0.018],
-    0.034
+    [0.016, 0.015, 0.021],
+    [0.011, 0.005, 0.009],
+    0.018
   );
+  mouthInterior.position.set(0.246, hy - 0.001, 0);
 
-  // Radial Cream Spines projecting cleanly outward across inflated shell
-  const spineGeo = track(new THREE.ConeGeometry(0.012, 0.048, 7));
+  // Clean Sculpted 3D Conical Spines anchored along exact surface normals (kept clear of face, eyes & fins)
+  const spineGeo = track(new THREE.ConeGeometry(0.0102, 0.046, 10));
+  spineGeo.translate(0, 0.015, 0);
+  const spineCollarGeo = track(new THREE.SphereGeometry(0.0115, 10, 6));
+  spineCollarGeo.scale(1, 0.42, 1);
+  const spineOlGeo = track(buildOutlineGeometry(spineGeo, 0.001));
   const spineMat = track(
     new THREE.MeshPhysicalMaterial({
-      color: "#fff6dc",
-      emissive: "#ffe4b5",
-      emissiveIntensity: 0.16,
-      roughness: 0.35,
+      color: "#fff5d6",
+      emissive: "#ffe8b8",
+      emissiveIntensity: 0.1,
+      roughness: 0.82,
+      clearcoat: 0,
+      envMapIntensity: 0.04,
     })
   );
-  const spineMeshes: THREE.Mesh[] = [];
-  for (let row = 0; row < 4; row++) {
-    const phi = ((row + 0.65) / 4.3) * Math.PI - Math.PI * 0.48;
-    for (let col = 0; col < 7; col++) {
-      const ang = (col / 7) * Math.PI * 2 + row * 0.45;
-      const sx = Math.cos(ang) * Math.cos(phi) * 0.21;
-      const sy = Math.sin(phi) * 0.22;
-      const sz = Math.sin(ang) * Math.cos(phi) * 0.2;
-      if (sx > 0.14 || sx < -0.2) continue;
+  const collarMat = track(
+    new THREE.MeshPhysicalMaterial({
+      color: mixHex(D, B, 0.35),
+      roughness: 0.88,
+      clearcoat: 0,
+      envMapIntensity: 0.04,
+    })
+  );
+  const spineOlMat = track(new THREE.MeshBasicMaterial({ color: OL, side: THREE.BackSide }));
+  const spineNodes: { mesh: THREE.Mesh; restQ: THREE.Quaternion; puffQ: THREE.Quaternion }[] = [];
+  const upVec = new THREE.Vector3(0, 1, 0);
+
+  const sampleSurfPos = (sx: number, phi: number) => {
+    const t = clamp((sx - xTail) / (xSnout - xTail), 0, 1);
+    const yt = evalTop(sx);
+    const yb = evalBot(sx);
+    const ym = (yt + yb) * 0.5;
+    const hh = (yt - yb) * 0.5;
+    const hz = evalZ(sx, t);
+    const sinP = Math.sin(phi);
+    const cosP = Math.cos(phi);
+    const tap = 1 - 0.12 * sinP * sinP;
+    return new THREE.Vector3(sx, ym + hh * sinP, hz * cosP * tap);
+  };
+
+  const xSlices = [-0.145, -0.085, -0.02, 0.045, 0.105];
+  for (let xi = 0; xi < xSlices.length; xi++) {
+    const sx = xSlices[xi];
+    const nAround = xi === 0 || xi === xSlices.length - 1 ? 7 : 9;
+    const ymSlice = evalMidY(sx);
+    for (let k = 0; k < nAround; k++) {
+      const phi = (k / nAround) * Math.PI * 2 + xi * 0.38;
+      const sinP = Math.sin(phi);
+      const cosP = Math.cos(phi);
+      // Keep dorsal/anal fin roots, pectoral fin sockets, and entire face/eye/cheek zone clear
+      if (sx < -0.075 && Math.abs(sinP) > 0.8) continue;
+      if (sx > -0.065 && sx < 0.065 && Math.abs(sinP + 0.18) < 0.32 && Math.abs(cosP) > 0.68) continue;
+      if (sx > 0.065 && sinP > -0.45 && sinP < 0.65 && Math.abs(cosP) > 0.45) continue;
+
+      const p0 = sampleSurfPos(sx, phi);
+      const px = sampleSurfPos(sx + 0.008, phi).sub(p0);
+      const pp = sampleSurfPos(sx, phi + 0.05).sub(p0);
+      const nrmOut = new THREE.Vector3().crossVectors(pp, px).normalize();
+      const dirOut = new THREE.Vector3(p0.x * 0.35, p0.y - ymSlice, p0.z);
+      if (nrmOut.dot(dirOut) < 0) nrmOut.negate();
+
+      const puffDir = nrmOut.clone().normalize();
+      const restDir = nrmOut.clone();
+      restDir.x -= 0.38;
+      restDir.normalize();
+
+      const restQ = new THREE.Quaternion().setFromUnitVectors(upVec, restDir);
+      const puffQ = new THREE.Quaternion().setFromUnitVectors(upVec, puffDir);
+
       const sm = new THREE.Mesh(spineGeo, spineMat);
-      sm.position.set(sx, sy, sz);
-      const dir = new THREE.Vector3(sx, sy, sz).normalize();
-      sm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      sm.position.set(p0.x - puffDir.x * 0.004, p0.y - puffDir.y * 0.004, p0.z - puffDir.z * 0.004);
+      sm.quaternion.copy(restQ);
+      const collar = new THREE.Mesh(spineCollarGeo, collarMat);
+      sm.add(collar, new THREE.Mesh(spineOlGeo, spineOlMat));
       scaleGroup.add(sm);
-      spineMeshes.push(sm);
+      spineNodes.push({ mesh: sm, restQ, puffQ });
     }
   }
 
@@ -2395,7 +2540,7 @@ function createPuffer3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       fc.fillStyle = makeLin(fc, b.maxX, 0, b.minX, 0, [
         [0, mixHex(FIN, D, 0.3)],
         [0.55, FIN],
-        [1, mixHex(FIN, "#ffffff", 0.42)],
+        [1, mixHex(FIN, "#fff4cf", 0.3)],
       ]);
       fc.fillRect(-0.3, -0.2, 0.4, 0.4);
       drawFinRays(
@@ -2418,10 +2563,10 @@ function createPuffer3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   );
   tailPivot.add(tailFin.mesh);
 
-  // Far-Back Rounded Dorsal & Anal Fins w/ 5 rays
+  // Far-Back Rounded Dorsal & Anal Fins w/ 4 rays
   const dorsalShape = new THREE.Shape();
-  dorsalShape.moveTo(-0.105, 0.182);
-  dorsalShape.bezierCurveTo(-0.118, 0.275, -0.205, 0.262, -0.215, 0.145);
+  dorsalShape.moveTo(-0.105, 0.175);
+  dorsalShape.bezierCurveTo(-0.118, 0.272, -0.205, 0.258, -0.215, 0.14);
   dorsalShape.lineTo(-0.188, 0.082);
   dorsalShape.closePath();
   scaleGroup.add(
@@ -2435,17 +2580,17 @@ function createPuffer3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       (fc) => {
         fc.fillStyle = makeLin(fc, -0.16, 0.1, -0.16, 0.26, [
           [0, mixHex(FIN, D, 0.3)],
-          [1, mixHex(FIN, "#ffffff", 0.4)],
+          [1, mixHex(FIN, "#fff4cf", 0.28)],
         ]);
         fc.fillRect(-0.3, 0, 0.3, 0.35);
         drawFinRays(
           fc,
           [-0.145, 0.135],
           [
-            [-0.132, 0.248],
-            [-0.155, 0.248],
-            [-0.178, 0.236],
-            [-0.198, 0.212],
+            [-0.132, 0.232],
+            [-0.155, 0.234],
+            [-0.178, 0.222],
+            [-0.195, 0.195],
           ],
           rgbaHex(D, 0.34),
           0.0032
@@ -2460,8 +2605,8 @@ function createPuffer3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   );
 
   const analShape = new THREE.Shape();
-  analShape.moveTo(-0.11, -0.178);
-  analShape.bezierCurveTo(-0.122, -0.268, -0.205, -0.255, -0.215, -0.14);
+  analShape.moveTo(-0.11, -0.172);
+  analShape.bezierCurveTo(-0.122, -0.264, -0.205, -0.25, -0.215, -0.135);
   analShape.lineTo(-0.188, -0.082);
   analShape.closePath();
   scaleGroup.add(
@@ -2475,17 +2620,17 @@ function createPuffer3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       (fc) => {
         fc.fillStyle = makeLin(fc, -0.16, -0.1, -0.16, -0.26, [
           [0, mixHex(FIN, D, 0.3)],
-          [1, mixHex(FIN, "#ffffff", 0.4)],
+          [1, mixHex(FIN, "#fff4cf", 0.28)],
         ]);
         fc.fillRect(-0.3, -0.35, 0.3, 0.35);
         drawFinRays(
           fc,
           [-0.145, -0.135],
           [
-            [-0.132, -0.242],
-            [-0.155, -0.242],
-            [-0.178, -0.23],
-            [-0.198, -0.205],
+            [-0.132, -0.228],
+            [-0.155, -0.23],
+            [-0.178, -0.218],
+            [-0.195, -0.19],
           ],
           rgbaHex(D, 0.34),
           0.0032
@@ -2499,58 +2644,85 @@ function createPuffer3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     ).mesh
   );
 
-  // Sculling Rounded Pectoral Fins
+  // Delicate Sculling Pectoral Fins seated neatly on mid-flank behind cheek (never overlapping chin/mouth)
   const pecShape = new THREE.Shape();
-  pecShape.moveTo(0, 0.012);
-  pecShape.bezierCurveTo(-0.04, 0.048, -0.105, 0.025, -0.098, -0.016);
-  pecShape.bezierCurveTo(-0.082, -0.048, -0.025, -0.042, 0, -0.014);
+  pecShape.moveTo(0, 0.008);
+  pecShape.bezierCurveTo(-0.028, 0.036, -0.072, 0.022, -0.068, -0.012);
+  pecShape.bezierCurveTo(-0.056, -0.038, -0.018, -0.032, 0, -0.01);
   pecShape.closePath();
   const pecObj = makeSpineFinMesh(
     ctx,
     pecShape,
-    0.04,
-    -0.06,
-    0.0028,
-    0.0008,
+    -0.025,
+    -0.034,
+    0.0024,
+    0.0007,
     (fc, b) => {
       fc.fillStyle = makeLin(fc, b.maxX, 0, b.minX, 0, [
-        [0, FIN],
-        [1, mixHex(FIN, "#ffffff", 0.42)],
+        [0, mixHex(FIN, D, 0.28)],
+        [1, mixHex(FIN, "#fff6d8", 0.22)],
       ]);
       fc.fillRect(-0.3, -0.2, 0.4, 0.4);
+      drawFinRays(
+        fc,
+        [-0.004, 0],
+        [
+          [-0.058, 0.015],
+          [-0.064, 0],
+          [-0.058, -0.015],
+        ],
+        rgbaHex(D, 0.34),
+        0.0024
+      );
     },
     maxAnisotropy,
     false,
-    0.0011
+    0.001
   );
+  const pecX = -0.025;
+  const pecY = -0.034;
+  const pecZ =
+    surfaceZAt(evalTop, evalBot, (x) => evalZ(x, clamp((x - xTail) / (xSnout - xTail), 0, 1)), pecX, pecY, 0.12, 1.0) +
+    0.005;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.04, -0.06, 0.185);
+  pecLeft.position.set(pecX, pecY, pecZ);
+  pecObj.mesh.rotation.y = 0.22;
   pecLeft.add(pecObj.mesh);
+
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.04, -0.06, -0.185);
-  pecRight.add(pecObj.mesh.clone());
+  pecRight.position.set(pecX, pecY, -pecZ);
+  const pecMeshR = pecObj.mesh.clone();
+  pecMeshR.rotation.y = -0.22;
+  pecRight.add(pecMeshR);
   scaleGroup.add(pecLeft, pecRight);
 
   const pelvicFin = new THREE.Group();
   scaleGroup.add(pelvicFin);
 
+  const pufferEx = 0.146;
+  const pufferEy = 0.062;
   const pufferEz = surfaceZAt(
     evalTop,
-    evalUnifiedBot,
-    (x) => evalZ(x, (x - xTail) / (xSnout - xTail)),
-    0.19,
-    0.068
+    evalBot,
+    (x) => evalZ(x, clamp((x - xTail) / (xSnout - xTail), 0, 1)),
+    pufferEx,
+    pufferEy,
+    0.12,
+    0.9
   );
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, scaleGroup, {
-    ex: 0.19,
-    ey: 0.068,
+    ex: pufferEx,
+    ey: pufferEy,
     ez: pufferEz,
-    er: 0.052,
+    er: 0.047,
+    yawRot: 0.4,
     irisColor: pal.iris || "#1f4a6e",
     rimColor: OL,
+    lidColor: mixHex(D, B, 0.42),
+    lidTilt: -0.14,
   });
 
-  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.025, -0.005, "#fff2c2", 0.056);
+  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.018, hy, "#fff2c2", 0.052);
 
   return {
     speciesKey: sp.id,
@@ -2576,19 +2748,21 @@ function createPuffer3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     uniforms,
     onCustomPose: (p, open) => {
       const tightClamp = p.jaw < 0 ? clamp(-p.jaw, 0, 0.4) : 0;
-      const puffK = (p.puff ? 1 : 0) + clamp(p.gulpT, 0, 1) * 0.45;
-      scaleGroup.scale.set(1 + puffK * 0.18, 1 + puffK * 0.24, 1 + puffK * 0.28);
-      for (const sm of spineMeshes) {
-        sm.scale.setScalar(0.75 + puffK * 0.65);
+      const puffK = clamp((p.puff ? 0.72 : 0) + clamp(p.gulpT, 0, 1) * 0.45, 0, 1.15);
+      scaleGroup.scale.set(1 + puffK * 0.14, 1 + puffK * 0.2, 1 + puffK * 0.24);
+      const erectK = clamp(puffK * 0.85, 0, 1);
+      for (const node of spineNodes) {
+        node.mesh.scale.setScalar(0.76 + puffK * 0.56);
+        node.mesh.quaternion.copy(node.restQ).slerp(node.puffQ, erectK);
       }
-      lowerJawGroup.rotation.z = -open * 0.72 + tightClamp * 0.12;
+      lowerJawGroup.rotation.z = -open * 0.55 + tightClamp * 0.1;
       const hasMouth = open > 0.03;
       mouthInterior.visible = hasMouth;
       if (hasMouth) {
-        mouthInterior.scale.set(0.85 + open * 0.22, 0.35 + open * 0.95, 0.78 + open * 0.18);
+        mouthInterior.scale.set(0.7 + open * 0.22, 0.25 + open * 0.85, 0.78 + open * 0.16);
       }
       tongueMesh.visible = open > 0.045;
-      tongueMesh.position.y = 0.001 + open * 0.008;
+      tongueMesh.position.y = -0.002 + open * 0.005;
     },
     dispose: () => {
       for (const d of ctx.disposables) d.dispose();
@@ -2628,7 +2802,7 @@ function createTang3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       [
         [to3D(-0.225, -0.042), to3D(-0.205, -0.16), to3D(-0.1, -0.255), to3D(0.055, -0.258)],
         [to3D(0.055, -0.258), to3D(0.185, -0.258), to3D(0.275, -0.195), to3D(0.305, -0.115)],
-        [to3D(0.305, -0.115), to3D(0.326, -0.045), to3D(0.34, 0.012), [ux3, -0.052]],
+        [to3D(0.305, -0.115), to3D(0.326, -0.045), to3D(0.34, 0.012), [ux3, -0.042]],
       ],
       22
     )
@@ -2638,7 +2812,7 @@ function createTang3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       [
         [to3D(-0.225, 0.025), to3D(-0.225, 0.062), to3D(-0.202, 0.105), to3D(-0.115, 0.195)],
         [to3D(-0.115, 0.195), to3D(-0.01, 0.262), to3D(0.135, 0.236), to3D(0.225, 0.188)],
-        [to3D(0.225, 0.188), to3D(0.28, 0.145), to3D(0.312, 0.105), [lx3, -0.072]],
+        [to3D(0.225, 0.188), to3D(0.28, 0.145), to3D(0.312, 0.105), [lx3, -0.080]],
       ],
       22
     )
@@ -2646,7 +2820,7 @@ function createTang3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const evalZ = (x: number, t: number) => {
     const base = 0.018 + 0.092 * Math.sin(Math.pow(clamp(t, 0, 1), 0.7) * Math.PI);
-    return x > 0.19 ? base * clamp(1 - (x - 0.19) / 0.18, 0.38, 1) : base;
+    return x > 0.19 ? base * clamp(1 - (x - 0.19) / 0.18, 0.42, 1) : base;
   };
 
   const { mapUV, beginCanvas2D } = createWorldMapper(-0.28, 0.37, -0.28, 0.28, 512);
@@ -2715,7 +2889,7 @@ function createTang3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const evalBot = (x: number) => interpCurveY(botPts, x);
   const evalUpperPalate = (x: number) => {
     const t = clamp((x - (hx - 0.02)) / (ux3 - (hx - 0.02)), 0, 1);
-    return hy + 0.012 * t;
+    return hy + 0.004 * t;
   };
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
@@ -2765,7 +2939,7 @@ function createTang3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       vSteps: 20,
       evalTopY: (x) => {
         const t = clamp((x - (hx - 0.02)) / (lx3 - (hx - 0.02)), 0, 1);
-        return hy - 0.008 * t;
+        return hy + 0.002 * t;
       },
       evalBotY: evalBot,
       evalHalfZ: evalZ,
@@ -2982,11 +3156,21 @@ function createTang3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     0.0011
   );
   pecObj.mesh.rotation.z = 0.62;
+  const pecZTang =
+    surfaceZAt(
+      evalTop,
+      evalUnifiedBot,
+      (x) => evalZ(x, clamp((x - xTail) / (ux3 - xTail), 0, 1)),
+      pecOx,
+      pecOy,
+      0.22,
+      1.0
+    ) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(pecOx, pecOy, 0.082);
+  pecLeft.position.set(pecOx, pecOy, pecZTang);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(pecOx, pecOy, -0.082);
+  pecRight.position.set(pecOx, pecOy, -pecZTang);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -3056,8 +3240,8 @@ function createIdol3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const xTail = -0.056;
   const hx = 0.284;
   const hy = -0.004; // -(-0.008 + 0.012)
-  const ux3 = 0.464;
-  const lx3 = 0.454;
+  const ux3 = 0.458;
+  const lx3 = 0.448;
 
   // Strictly ascending-X upper profile matching drawIdol forehead, brow, concave bridge & arched bulbous beak!
   const topPts = sortAscX(
@@ -3066,7 +3250,7 @@ function createIdol3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
         [to3D(-0.056, -0.016), to3D(-0.025, -0.115), to3D(0.035, -0.235), to3D(0.114, -0.322)],
         [to3D(0.114, -0.322), to3D(0.185, -0.305), to3D(0.255, -0.215), to3D(0.305, -0.104)],
         [to3D(0.305, -0.104), to3D(0.326, -0.072), to3D(0.365, -0.09), to3D(0.422, -0.064)],
-        [to3D(0.422, -0.064), to3D(0.448, -0.038), to3D(0.458, -0.022), to3D(0.464, -0.014)],
+        [to3D(0.422, -0.064), to3D(0.442, -0.046), to3D(0.454, -0.032), to3D(ux3, -0.022)],
       ],
       24
     )
@@ -3076,7 +3260,7 @@ function createIdol3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       [
         [to3D(-0.056, 0.016), to3D(-0.03, 0.095), to3D(0.085, 0.215), to3D(0.205, 0.277)],
         [to3D(0.205, 0.277), to3D(0.245, 0.248), to3D(0.288, 0.195), to3D(0.336, 0.138)],
-        [to3D(0.336, 0.138), to3D(0.376, 0.072), to3D(0.408, 0.022), to3D(0.454, -0.006)],
+        [to3D(0.336, 0.138), to3D(0.376, 0.072), to3D(0.415, 0.026), to3D(lx3, 0.011)],
       ],
       24
     )
@@ -3084,7 +3268,7 @@ function createIdol3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const evalZ = (x: number, t: number) => {
     const base = 0.016 + 0.068 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
-    return x > 0.28 ? base * clamp(1 - (x - 0.28) / 0.22, 0.28, 1) : base;
+    return x > 0.28 ? base * clamp(1 - (x - 0.28) / 0.22, 0.40, 1) : base;
   };
 
   const { mapUV, beginCanvas2D } = createWorldMapper(-0.1, 0.5, -0.35, 0.35, 512);
@@ -3211,7 +3395,7 @@ function createIdol3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const evalBot = (x: number) => interpCurveY(botPts, x);
   const evalUpperPalate = (x: number) => {
     const t = clamp((x - (hx - 0.02)) / (ux3 - (hx - 0.02)), 0, 1);
-    return hy + 0.006 * t;
+    return hy - 0.004 * t;
   };
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
@@ -3515,11 +3699,23 @@ function createIdol3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     false,
     0.001
   );
+  const pecZIdol =
+    surfaceZAt(
+      evalTop,
+      evalUnifiedBot,
+      (x) => evalZ(x, clamp((x - xTail) / (ux3 - xTail), 0, 1)),
+      pecOx,
+      pecOy,
+      0.22,
+      1.0
+    ) + 0.009;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(pecOx, pecOy, 0.065);
+  pecLeft.position.set(pecOx, pecOy, pecZIdol);
+  pecLeft.rotation.x = 0.26;
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(pecOx, pecOy, -0.065);
+  pecRight.position.set(pecOx, pecOy, -pecZIdol);
+  pecRight.rotation.x = -0.26;
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -3567,138 +3763,173 @@ function createIdol3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 }
 
 // =====================================================================================
-// 8. PARROT (Kakatua — Prominent Forehead Hump, Aqua Beak Lips, 6 Zigzag Chevrons)
+// 8. NAPOLEON WRASSE (Ikan Napoleon — Overhanging Wen, Wide-Open Jaw, Cushion Lips, Clear Eye)
 // =====================================================================================
 function createParrot3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const pal = sp.pal;
-  const OL = pal.outline || "#04261c";
-  const B = pal.body; // #12b84a
-  const D = pal.dark; // #06662c
-  const BEL = pal.belly; // #3ae276
-  const CYAN = pal.stripe || "#0098d8";
-  const CHEV = pal.spot || "#06562a";
+  const OL = pal.outline || "#093648";
+  const B = pal.body; // #18b848
+  const D = pal.dark; // #08682c
+  const BEL = pal.belly; // #19a858
+  const CYAN = pal.stripe || "#14b4d8";
+  const CHEV = pal.spot || "#095424";
+  const ROYAL = "#0e4eb8";
+  const NAVY = "#0d3b82";
 
-  const ctx = createRigContext(OL, "#4a4a4a");
-  const { track, uniforms, makeOutlineMat, makeFishMat } = ctx;
+  const ctx = createRigContext(OL, "#c0c0c0");
+  const { track, uniforms, makeFishMat } = ctx;
   const { root, pitchGroup, yawGroup, bodyGroup } = baseGroups();
 
-  const xTail = -0.32;
-  const xHead = 0.21;
-  const xSnout = 0.375;
+  const xTail = -0.34;
+  const xSnout = 0.37;
+  // Terminal jaw hinge tucked smoothly into the cheek so chin & belly stay 100% seamless when closed and open wide cleanly!
+  const hx = 0.268;
+  const hy = -0.032;
 
-  // Exact sprites.ts parrot profile: tall rounded cyan forehead hump + stout protruding beak!
+  // Monotonically ascending-X dorsal silhouette (bold rounded jenong & concave bridge sculpted cleanly in 3D vertices below)
   const topPts = sortAscX(
     sampleBezierChain(
       [
         [
-          [xTail, 0.052],
-          [-0.22, 0.155],
-          [-0.08, 0.205],
-          [0.08, 0.212],
+          [xTail, 0.056],
+          [-0.22, 0.145],
+          [-0.02, 0.214],
+          [0.105, 0.23],
         ],
         [
-          [0.08, 0.212],
-          [0.2, 0.224],
-          [0.275, 0.212],
-          [0.325, 0.115],
+          [0.105, 0.23],
+          [0.165, 0.246],
+          [0.215, 0.238],
+          [0.24, 0.158],
         ],
         [
-          [0.325, 0.115],
-          [0.348, 0.068],
-          [0.365, 0.032],
-          [xSnout, 0.005],
+          [0.24, 0.158],
+          [0.268, 0.114],
+          [0.32, 0.06],
+          [xSnout, 0.014],
         ],
       ],
-      22
+      28
     )
   );
   const botPts = sortAscX(
     sampleBezierChain(
       [
         [
-          [xTail, -0.052],
+          [xTail, -0.056],
           [-0.22, -0.142],
-          [-0.08, -0.188],
-          [0.08, -0.194],
+          [-0.02, -0.202],
+          [0.12, -0.204],
         ],
         [
-          [0.08, -0.194],
-          [0.2, -0.175],
-          [0.285, -0.125],
-          [0.355, -0.042],
-        ],
-        [
-          [0.355, -0.042],
-          [0.365, -0.025],
-          [0.37, -0.014],
-          [xSnout - 0.004, -0.008],
+          [0.12, -0.204],
+          [0.225, -0.194],
+          [0.312, -0.128],
+          [xSnout, -0.022],
         ],
       ],
-      22
+      28
     )
   );
 
-  const evalZ = (x: number, t: number) => {
-    const base = 0.024 + 0.105 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
-    return x > 0.22 ? base * clamp(1 - (x - 0.22) / 0.19, 0.38, 1) : base;
+  // Mouth parting seam curving gently upward from hinge (hx, hy) to snout front (xSnout, 0.002)
+  const mouthSeam = (x: number) => {
+    const u = clamp((x - hx) / (xSnout - hx), 0, 1);
+    return hy + (0.002 - hy) * Math.pow(u, 0.88);
   };
 
-  const { mapUV, beginCanvas2D } = createWorldMapper(-0.36, 0.42, -0.24, 0.24, 512);
+  // Full rounded cheeks & plump broad snout
+  const evalZ = (x: number, t: number) => {
+    const base = 0.042 + 0.116 * Math.sin(Math.pow(clamp(t, 0, 1), 0.68) * Math.PI);
+    return x > 0.24 ? base * clamp(1 - (x - 0.24) / 0.28, 0.72, 1) : base;
+  };
 
-  // Paint Emerald -> Ocean Cyan Parrot Coat + Aqua Beak Lips + 6 Vertical Zigzag Chevrons
+  const { mapUV, beginCanvas2D } = createWorldMapper(-0.38, 0.46, -0.29, 0.29, 512);
+
+  // Paint Image 2 Napoleon coat: 10 zigzags first -> seamless Cyan head & wen -> Cobalt chin -> soft brow & curved gill arc
   const bodyCv = document.createElement("canvas");
   bodyCv.width = 512;
   bodyCv.height = 512;
   const bc = bodyCv.getContext("2d")!;
   beginCanvas2D(bc, 0, 0);
 
-  bc.fillStyle = makeLin(bc, 0, -0.21, 0, 0.21, [
+  bc.fillStyle = makeLin(bc, 0, -0.23, 0, 0.23, [
     [0, D],
-    [0.42, B],
-    [0.82, BEL],
+    [0.42, "#18c450"],
+    [0.82, B],
     [1, mixHex(D, BEL, 0.45)],
   ]);
-  bc.fillRect(-0.42, -0.28, 0.9, 0.56);
+  bc.fillRect(-0.44, -0.32, 0.96, 0.64);
 
-  // Cyan-blue ocean head transition fading smoothly into emerald body
-  const hg = makeLin(bc, 0.05, 0, 0.34, 0, [
-    [0, "rgba(0, 168, 216, 0)"],
-    [0.45, "rgba(0, 168, 216, 0.85)"],
-    [1, CYAN],
-  ]);
-  bc.fillStyle = hg;
-  bc.fillRect(0.0, -0.28, 0.46, 0.56);
-
-  drawGlow(bc, 0.08, -0.1, 0.18, 0.055, -0.12, "255,255,255", 0.34);
-
-  // 6 Vertical Zigzag Dark-Green Chevron Stripes along body
-  bc.strokeStyle = rgbaHex(CHEV, 0.76);
-  bc.lineWidth = 0.011;
+  // 10 dark-forest-green wavy vertical zigzag stripes across the emerald body
+  bc.strokeStyle = rgbaHex(CHEV, 0.72);
+  bc.lineWidth = 0.0076;
   bc.lineCap = "round";
   bc.lineJoin = "round";
-  for (let c = 0; c < 6; c++) {
-    const cx = 0.085 - c * 0.058;
+  for (let c = 0; c < 10; c++) {
+    const cx = 0.155 - c * 0.048;
     bc.beginPath();
-    for (let s = 0; s <= 10; s++) {
-      const sy = -0.18 + s * 0.036;
-      const sx = cx + (s % 2 ? 0.012 : -0.012);
+    for (let s = 0; s <= 12; s++) {
+      const sy = -0.2 + s * 0.034;
+      const sx = cx + (s % 2 ? 0.009 : -0.009);
       if (s === 0) bc.moveTo(sx, sy);
       else bc.lineTo(sx, sy);
     }
     bc.stroke();
   }
 
-  // Thick aqua-blue fused parrot beak lips highlight
-  bc.fillStyle = "#5cf2ff";
-  drawBlob(bc, 0.355, -0.01, 0.028, 0.016, 0);
-  drawBlob(bc, 0.35, 0.014, 0.024, 0.015, 0);
+  // Diagonal curved cyan-turquoise head & forehead dome (painted OVER front stripes so head stays clean!)
+  const headDiag = makeLin(bc, 0.03, -0.1, 0.26, 0.04, [
+    [0, "rgba(20, 180, 216, 0)"],
+    [0.42, "rgba(20, 180, 216, 0.88)"],
+    [0.72, CYAN],
+    [1, "#1cd0ea"],
+  ]);
+  bc.fillStyle = headDiag;
+  bc.fillRect(-0.02, -0.32, 0.56, 0.64);
 
-  // Operculum arc
-  bc.strokeStyle = rgbaHex(OL, 0.55);
-  bc.lineWidth = 0.0068;
+  // Extra cyan-cobalt crown coverage over the forward-overhanging wen
+  const crownGrad = bc.createRadialGradient(0.23, -0.185, 0.02, 0.21, -0.165, 0.22);
+  crownGrad.addColorStop(0, "#18c4e8");
+  crownGrad.addColorStop(0.65, "rgba(20, 174, 216, 0.88)");
+  crownGrad.addColorStop(1, "rgba(20, 174, 216, 0)");
+  bc.fillStyle = crownGrad;
+  bc.fillRect(-0.04, -0.32, 0.52, 0.34);
+
+  // Seamless deep royal cobalt-blue along throat, chin & lower cheek
+  const chinGrad = bc.createRadialGradient(0.23, 0.14, 0.02, 0.21, 0.12, 0.24);
+  chinGrad.addColorStop(0, rgbaHex(ROYAL, 0.94));
+  chinGrad.addColorStop(0.54, rgbaHex(ROYAL, 0.68));
+  chinGrad.addColorStop(0.84, rgbaHex(ROYAL, 0.16));
+  chinGrad.addColorStop(1, rgbaHex(ROYAL, 0));
+  bc.fillStyle = chinGrad;
+  bc.fillRect(-0.06, -0.28, 0.58, 0.6);
+
+  // Soft volumetric jenong dome highlight + deep underside overhang & eye-socket brow shade (Image 1)
+  drawGlow(bc, 0.244, -0.205, 0.072, 0.042, -0.28, "148, 248, 255", 0.3);
+  drawGlow(bc, 0.238, -0.145, 0.046, 0.02, -0.35, "6, 66, 110", 0.28);
+  drawGlow(bc, 0.222, -0.098, 0.042, 0.032, -0.15, "6, 68, 108", 0.42);
+  drawGlow(bc, 0.0, -0.1, 0.16, 0.06, -0.1, "130, 255, 175", 0.16);
+
+  // Two soft parallel dark-teal nose-wrinkle creases tucked behind the upper lip along the 42-deg snout slope
+  bc.strokeStyle = rgbaHex("#074462", 0.45);
+  bc.lineWidth = 0.0048;
+  for (const d of [0, 0.017]) {
+    bc.beginPath();
+    bc.moveTo(0.312 + d, -0.058 + d * 0.6);
+    bc.quadraticCurveTo(0.328 + d, -0.044 + d * 0.5, 0.34 + d, -0.024 + d * 0.4);
+    bc.stroke();
+  }
+
+  // Gracefully curved soft cobalt operculum (gill cover) arc right in front of the pectoral fin (Image 2)
   bc.beginPath();
-  bc.moveTo(0.185, -0.075);
-  bc.quadraticCurveTo(0.155, 0.02, 0.125, 0.1);
+  bc.moveTo(0.156, -0.026);
+  bc.bezierCurveTo(0.178, 0.026, 0.172, 0.086, 0.126, 0.122);
+  bc.strokeStyle = rgbaHex("#0a3b7a", 0.22);
+  bc.lineWidth = 0.013;
+  bc.stroke();
+  bc.strokeStyle = rgbaHex("#09356e", 0.55);
+  bc.lineWidth = 0.0052;
   bc.stroke();
 
   bc.restore();
@@ -3707,99 +3938,319 @@ function createParrot3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   bodyTex.colorSpace = THREE.SRGBColorSpace;
   bodyTex.anisotropy = maxAnisotropy;
 
-  const hx = xHead;
-  const hy = -0.015;
   const evalTop = (x: number) => interpCurveY(topPts, x);
-  const evalBot = (x: number) => interpCurveY(botPts, x);
-  const evalUpperPalate = (x: number) => {
-    const t = clamp((x - (hx - 0.02)) / (xSnout - (hx - 0.02)), 0, 1);
-    return hy + 0.022 * t;
+  const evalBotFull = (x: number) => interpCurveY(botPts, x);
+  const fullBodyZAt = (x: number, y: number) => {
+    const t = clamp((x - xTail) / (xSnout - xTail), 0, 1);
+    const yt = evalTop(x);
+    const yb = evalBotFull(x);
+    const ym = (yt + yb) * 0.5;
+    const hh = Math.max(0.006, (yt - yb) * 0.5);
+    const s = clamp((y - ym) / hh, -0.995, 0.995);
+    return evalZ(x, t) * Math.sqrt(Math.max(0.01, 1 - s * s)) * (1 - 0.22 * s * s);
   };
-  const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx);
-  const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
-  const parrotMask = bodySpineOutlineMask(
-    evalMidY,
-    [
-      { x0: -0.258, x1: 0.145, top: true },
-      { x0: -0.255, x1: -0.025, top: false },
-    ],
-    0.026
-  );
 
+  // Build Upper Cranium + Smooth Cheek (-0.34 .. 0.37), keeping full belly down to hx - 0.022 so ZERO chin notch!
+  const bodyU = 84;
+  const bodyV = 36;
+  const bodyRingCols = bodyV + 1;
   const bodyGeo = track(
     buildLoftedSurface({
       xStart: xTail,
       xEnd: xSnout,
-      uSteps: 44,
-      vSteps: 28,
+      uSteps: bodyU,
+      vSteps: bodyV,
       evalTopY: evalTop,
-      evalBotY: evalUnifiedBot,
+      evalBotY: blendBotToPalate(evalBotFull, mouthSeam, hx, 0.022, 0.012),
       evalHalfZ: evalZ,
       mapUV,
       rearBulge: 0.004,
-      roundFront: true,
+      roundFront: false,
     })
   );
-  const bodyMat = makeFishMat(bodyTex);
+
+  // Sculpt bold rounded overhanging Napoleon jenong + deep concave nose bridge + flush upper cheek down to mouthSeam
+  const bPos = bodyGeo.attributes.position;
+  const bUv = bodyGeo.attributes.uv;
+  for (let i = 0; i <= bodyU; i++) {
+    const t = i / bodyU;
+    const x = xTail + (xSnout - xTail) * t;
+    const kSplit = smoothstep(hx - 0.022, hx + 0.012, x);
+    const mY = mouthSeam(x);
+    const yt = evalTop(x);
+
+    for (let j = 0; j <= bodyV; j++) {
+      const idx = i * bodyRingCols + j;
+      let vx = bPos.getX(idx);
+      let vy = bPos.getY(idx);
+      let vz = bPos.getZ(idx);
+
+      if (kSplit > 0.001) {
+        const phi = (j / bodyV) * Math.PI * 2;
+        const sinP = Math.sin(phi);
+        const cosP = Math.cos(phi);
+        const fullCheckY = sinP >= 0 ? mY + (yt - mY) * sinP : mY + 0.004 * Math.abs(sinP);
+        const fullW = fullBodyZAt(x, sinP >= 0 ? fullCheckY : mY) * cosP;
+        vy = vy * (1 - kSplit) + fullCheckY * kSplit;
+        vz = vz * (1 - kSplit) + fullW * kSplit;
+      }
+
+      // Bold, broad, rounded overhanging Napoleon jenong dome matching Image 1
+      const wenDx = (vx - 0.205) / 0.075;
+      const wenDy = clamp((vy - 0.135) / 0.105, 0, 1);
+      const wenK = Math.exp(-wenDx * wenDx * 1.15) * Math.sin(wenDy * Math.PI * 0.78);
+      if (wenK > 0.001) {
+        vx += wenK * 0.044;
+        vy += wenK * 0.014;
+        vz *= 1 + wenK * 0.24;
+      }
+
+      // Concave saddle hollow right below the jenong in front of the eye socket
+      const dipY = smoothstep(0.088, 0.125, vy) * (1 - smoothstep(0.148, 0.178, vy));
+      const dipX = smoothstep(0.205, 0.238, vx) * (1 - smoothstep(0.27, 0.305, vx));
+      const dipK = dipX * dipY;
+      if (dipK > 0) {
+        vx -= dipK * 0.013;
+        vy -= dipK * 0.004;
+      }
+
+      bPos.setXYZ(idx, vx, vy, vz);
+      const [tu, tv] = mapUV(vx, vy);
+      bUv.setXY(idx, tu, tv);
+    }
+  }
+  bPos.needsUpdate = true;
+  bUv.needsUpdate = true;
+  bodyGeo.computeVertexNormals();
+
+  const bodyMat = makeFishMat(bodyTex, {
+    roughness: 0.86,
+    clearcoat: 0.03,
+    envMapIntensity: 0.06,
+    emissiveIntensity: 0.12,
+  });
   injectSpineShader(bodyMat, uniforms, 0, 0);
-  bodyGroup.add(
-    new THREE.Mesh(bodyGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(bodyGeo, 0.0042, parrotMask)), makeOutlineMat(0, 0))
+  bodyGroup.add(new THREE.Mesh(bodyGeo, bodyMat));
+
+  // Articulated Lower Jaw & Chin (lGeo) overlapping seamlessly behind hx on fullBodyZ -> ZERO notch when closed, WIDE-OPEN jaw when biting!
+  const lowerU = 38;
+  const lowerV = 28;
+  const lowerRingCols = lowerV + 1;
+  const xLowStart = hx - 0.025;
+  const evalLowerBot = (x: number) => {
+    const b = evalBotFull(x);
+    if (x >= hx - 0.01) return b;
+    const k = clamp((hx - 0.01 - x) / 0.015, 0, 1);
+    return b + 0.014 * k;
+  };
+  const lGeo = track(
+    buildLoftedSurface({
+      xStart: xLowStart,
+      xEnd: xSnout,
+      uSteps: lowerU,
+      vSteps: lowerV,
+      evalTopY: (x) => mouthSeam(Math.max(x, hx)) - 0.001,
+      evalBotY: evalLowerBot,
+      evalHalfZ: evalZ,
+      mapUV,
+      localOffsetX: hx,
+      localOffsetY: hy,
+      roundFront: false,
+    })
+  );
+  const lPos = lGeo.attributes.position;
+  const lUv = lGeo.attributes.uv;
+  for (let i = 0; i <= lowerU; i++) {
+    const t = i / lowerU;
+    const wx = xLowStart + (xSnout - xLowStart) * t;
+    const inset = wx < hx ? 0.8 + 0.195 * clamp((wx - xLowStart) / (hx - xLowStart), 0, 1) : 0.995;
+    const topLim = mouthSeam(Math.max(wx, hx)) - 0.001;
+    const botLim = evalLowerBot(wx);
+    for (let j = 0; j <= lowerV; j++) {
+      const idx = i * lowerRingCols + j;
+      const phi = (j / lowerV) * Math.PI * 2;
+      const sinP = Math.sin(phi);
+      const cosP = Math.cos(phi);
+      const wy = sinP <= 0 ? topLim + (topLim - botLim) * sinP : topLim - 0.004 * sinP;
+      const targetZ = fullBodyZAt(wx, sinP <= 0 ? wy : topLim) * inset * cosP;
+      lPos.setXYZ(idx, wx - hx, wy - hy, targetZ);
+      const [tu, tv] = mapUV(wx, wy);
+      lUv.setXY(idx, tu, tv);
+    }
+  }
+  lPos.needsUpdate = true;
+  lUv.needsUpdate = true;
+  lGeo.computeVertexNormals();
+
+  const lowerMat = makeFishMat(bodyTex, {
+    roughness: 0.86,
+    clearcoat: 0.03,
+    envMapIntensity: 0.06,
+    emissiveIntensity: 0.12,
+  });
+  injectSpineShader(lowerMat, uniforms, hx, hy);
+
+  // Plump Rounded Horseshoe U-Arch Cushion Lips matching Image 2 (NO flat duck-bill planks!)
+  const makeArchLipGeo = (
+    xFront: number,
+    yFront: number,
+    xCorner: number,
+    yCorner: number,
+    zCorner: number,
+    rFront: number,
+    rCorner: number,
+    isUpper: boolean
+  ) => {
+    const uSegs = 28;
+    const vSegs = 16;
+    const ring = vSegs + 1;
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const indices: number[] = [];
+
+    const cCrest = new THREE.Color(isUpper ? "#72f7ff" : "#56ebfc");
+    const cOuter = new THREE.Color(isUpper ? "#18bfe2" : ROYAL);
+    const cInner = new THREE.Color("#08486c");
+    const tmp = new THREE.Color();
+
+    const archPt = (u: number): [number, number, number] => {
+      const s = u * 2 - 1; // -1 .. +1
+      const z = s * zCorner;
+      const a = 1 - s * s; // 0 at corners, 1 at center front
+      const x = xCorner + (xFront - xCorner) * Math.pow(a, 0.82);
+      const y = yCorner + (yFront - yCorner) * Math.pow(a, 0.9);
+      return [x, y, z];
+    };
+
+    for (let i = 0; i <= uSegs; i++) {
+      const u = i / uSegs;
+      const s = u * 2 - 1;
+      const archFactor = Math.sqrt(Math.max(0, 1 - s * s));
+      const rBase = rCorner + (rFront - rCorner) * Math.pow(archFactor, 0.72);
+      const endPinch = i === 0 || i === uSegs ? 0.12 : 1;
+      const r = rBase * endPinch;
+
+      const [cx, cy, cz] = archPt(u);
+      const u0 = Math.max(0, u - 0.02);
+      const u1 = Math.min(1, u + 0.02);
+      const [x0, y0, z0] = archPt(u0);
+      const [x1, y1, z1] = archPt(u1);
+      const tx = x1 - x0;
+      const ty = y1 - y0;
+      const tz = z1 - z0;
+      const tLen = Math.hypot(tx, ty, tz) || 1;
+      const tux = tx / tLen;
+      const tuy = ty / tLen;
+      const tuz = tz / tLen;
+
+      // Build orthonormal cross-section frame: N = normalize(Up x T) points outward/forward (+X), B = T x N points upward (+Y)
+      const upX = 0;
+      const upY = 1;
+      const upZ = 0;
+      let nx = upY * tuz - upZ * tuy;
+      let ny = upZ * tux - upX * tuz;
+      let nz = upX * tuy - upY * tux;
+      const nLen = Math.hypot(nx, ny, nz) || 1;
+      nx /= nLen;
+      ny /= nLen;
+      nz /= nLen;
+      const bx = tuy * nz - tuz * ny;
+      const by = tuz * nx - tux * nz;
+      const bz = tux * ny - tuy * nx;
+
+      for (let j = 0; j <= vSegs; j++) {
+        const phi = (j / vSegs) * Math.PI * 2;
+        const cP = Math.cos(phi);
+        const sP = Math.sin(phi);
+        // Round plump cross-section (1.02 outward x 1.12 vertical)
+        const ox = (nx * cP * 1.02 + bx * sP * 1.12) * r;
+        const oy = (ny * cP * 1.02 + by * sP * 1.12) * r;
+        const oz = (nz * cP * 1.02 + bz * sP * 1.12) * r;
+        positions.push(cx + ox, cy + oy, cz + oz);
+
+        const innerMask = isUpper ? -sP : sP;
+        const outerMask = isUpper ? sP : -sP;
+        if (innerMask > 0.12) {
+          tmp.copy(cCrest).lerp(cInner, clamp((innerMask - 0.12) / 0.88, 0, 1) * 0.86);
+        } else if (outerMask > 0.25 || cP < -0.15) {
+          const k = clamp(Math.max(outerMask > 0.25 ? (outerMask - 0.25) / 0.75 : 0, cP < -0.15 ? (-cP - 0.15) / 0.85 : 0), 0, 1);
+          tmp.copy(cCrest).lerp(cOuter, k * 0.92);
+        } else {
+          tmp.copy(cCrest);
+        }
+        colors.push(tmp.r, tmp.g, tmp.b);
+      }
+    }
+
+    for (let i = 0; i < uSegs; i++) {
+      for (let j = 0; j < vSegs; j++) {
+        const a = i * ring + j;
+        const b = (i + 1) * ring + j;
+        const c = (i + 1) * ring + (j + 1);
+        const d = i * ring + (j + 1);
+        indices.push(a, d, b);
+        indices.push(b, d, c);
+      }
+    }
+
+    const g = track(new THREE.BufferGeometry());
+    g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    g.setIndex(indices);
+    g.computeVertexNormals();
+    return g;
+  };
+
+  const lipMat = track(
+    new THREE.MeshPhysicalMaterial({
+      color: "#ffffff",
+      vertexColors: true,
+      roughness: 0.76,
+      clearcoat: 0.03,
+      envMapIntensity: 0.05,
+    })
   );
 
   const upperJawGroup = new THREE.Group();
   upperJawGroup.position.set(hx, hy, 0);
   bodyGroup.add(upperJawGroup);
 
+  const upperLipGeo = makeArchLipGeo(0.363 - hx, 0.012 - hy, 0.31 - hx, -0.015 - hy, 0.044, 0.0155, 0.006, true);
+  upperJawGroup.add(new THREE.Mesh(upperLipGeo, lipMat));
+
   const lowerJawGroup = new THREE.Group();
   lowerJawGroup.position.set(hx, hy, 0);
   bodyGroup.add(lowerJawGroup);
-  const lGeo = track(
-    buildLoftedSurface({
-      xStart: hx - 0.02,
-      xEnd: xSnout - 0.004,
-      uSteps: 18,
-      vSteps: 22,
-      evalTopY: (x) => {
-        const t = clamp((x - (hx - 0.02)) / (xSnout - 0.004 - (hx - 0.02)), 0, 1);
-        return hy + 0.008 * t;
-      },
-      evalBotY: evalBot,
-      evalHalfZ: evalZ,
-      mapUV,
-      localOffsetX: hx,
-      localOffsetY: hy,
-      roundFront: true,
-      rearInsetAt: (x) => (x < hx ? smoothstep(hx - 0.02, hx + 0.008, x) * 0.92 + 0.08 : 1),
-    })
-  );
-  lowerJawGroup.add(
-    new THREE.Mesh(lGeo, bodyMat),
-    new THREE.Mesh(track(buildOutlineGeometry(lGeo, 0.0038, jawOutlineMask(0.008, 0.044))), makeOutlineMat(hx, hy))
-  );
+  lowerJawGroup.add(new THREE.Mesh(lGeo, lowerMat));
 
+  const lowerLipGeo = makeArchLipGeo(0.367 - hx, -0.009 - hy, 0.311 - hx, -0.02 - hy, 0.043, 0.015, 0.006, false);
+  lowerJawGroup.add(new THREE.Mesh(lowerLipGeo, lipMat));
+
+  // Compact recessed oral throat cavern & tongue strictly INSIDE the jaw (never bulges out the snout or sides!)
   const { mouthInterior, tongueMesh } = createOralParts(
     ctx,
     bodyGroup,
     lowerJawGroup,
-    hx,
-    hy,
-    "#4e1022",
+    0.264,
+    -0.026,
+    "#460e1e",
     "#ec6a8e",
-    [0.042, 0.036, 0.026],
-    [0.03, 0.011, 0.016],
-    0.04
+    [0.05, 0.034, 0.036],
+    [0.032, 0.01, 0.024],
+    0.045
   );
+  mouthInterior.position.set(0.264, -0.026, 0);
+  tongueMesh.position.set(0.295 - hx, -0.028 - hy, 0);
 
-  // Truncate Teal Tail w/ Horizontal Dark-Green Ray Bands
+  // Broad Rounded-Corner Mint-Green Paddle Tail w/ Navy Rim & 5 Horizontal Stripes (Image 2)
   const tailPivot = new THREE.Group();
   tailPivot.position.set(xTail + 0.014, 0, 0);
   bodyGroup.add(tailPivot);
   const tailShape = new THREE.Shape();
-  tailShape.moveTo(0.012, 0.048);
-  tailShape.quadraticCurveTo(-0.078, 0.118, -0.165, 0.125);
-  tailShape.quadraticCurveTo(-0.18, 0, -0.165, -0.125);
-  tailShape.quadraticCurveTo(-0.078, -0.118, 0.012, -0.048);
+  tailShape.moveTo(0.014, 0.054);
+  tailShape.bezierCurveTo(-0.04, 0.108, -0.115, 0.114, -0.145, 0.088);
+  tailShape.bezierCurveTo(-0.165, 0.048, -0.167, -0.048, -0.145, -0.088);
+  tailShape.bezierCurveTo(-0.115, -0.114, -0.04, -0.108, 0.014, -0.054);
   tailShape.closePath();
 
   const tailFin = makeSpineFinMesh(
@@ -3811,45 +4262,39 @@ function createParrot3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     0.001,
     (fc, b) => {
       fc.fillStyle = makeLin(fc, b.maxX, 0, b.minX, 0, [
-        [0, mixHex(pal.tail || "#1ab8c8", D, 0.35)],
-        [0.55, pal.tail || "#1ab8c8"],
-        [1, mixHex(pal.tail || "#1ab8c8", "#ffffff", 0.42)],
+        [0, "#0c6e38"],
+        [0.45, "#3ac992"],
+        [0.82, "#5ee0aa"],
+        [1, NAVY],
       ]);
       fc.fillRect(-0.3, -0.25, 0.4, 0.5);
-      // Horizontal dark green ray bands matching sprites.ts parrot
-      fc.strokeStyle = rgbaHex(CHEV, 0.62);
-      fc.lineWidth = 0.016;
-      for (const k of [-0.62, -0.3, 0, 0.3, 0.62]) {
+      fc.strokeStyle = rgbaHex(NAVY, 0.8);
+      fc.lineWidth = 0.013;
+      fc.lineCap = "round";
+      for (const k of [-0.66, -0.33, 0, 0.33, 0.66]) {
         fc.beginPath();
-        fc.moveTo(-0.02, k * 0.042);
-        fc.lineTo(-0.17, k * 0.112);
+        fc.moveTo(-0.014, k * 0.045);
+        fc.lineTo(-0.15, k * 0.092);
         fc.stroke();
       }
-      drawFinRays(
-        fc,
-        [0.01, 0],
-        [
-          [-0.16, 0.095],
-          [-0.17, 0.045],
-          [-0.172, 0],
-          [-0.17, -0.045],
-          [-0.16, -0.095],
-        ],
-        rgbaHex(OL, 0.32),
-        0.0034
-      );
+      fc.strokeStyle = rgbaHex(NAVY, 0.85);
+      fc.lineWidth = 0.014;
+      fc.beginPath();
+      fc.moveTo(-0.142, 0.088);
+      fc.bezierCurveTo(-0.162, 0.048, -0.164, -0.048, -0.142, -0.088);
+      fc.stroke();
     },
     maxAnisotropy,
     false,
-    0.0012
+    0
   );
   tailPivot.add(tailFin.mesh);
 
-  // Long Sweeping Cyan-Blue & Cobalt-Rimmed Dorsal & Anal Fins
+  // Long Sweeping Rounded Emerald-Teal Dorsal & Anal Fins w/ Cobalt-Navy Outer Margin (Image 2)
   const dorsalShape = new THREE.Shape();
-  dorsalShape.moveTo(0.145, 0.178);
-  dorsalShape.bezierCurveTo(0.01, 0.278, -0.165, 0.285, -0.258, 0.185);
-  dorsalShape.quadraticCurveTo(-0.25, 0.105, -0.232, 0.055);
+  dorsalShape.moveTo(0.115, 0.205);
+  dorsalShape.bezierCurveTo(-0.04, 0.298, -0.23, 0.298, -0.31, 0.162);
+  dorsalShape.quadraticCurveTo(-0.29, 0.095, -0.245, 0.056);
   dorsalShape.closePath();
 
   bodyGroup.add(
@@ -3861,33 +4306,32 @@ function createParrot3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       0.0036,
       0.001,
       (fc) => {
-        fc.fillStyle = makeLin(fc, 0, 0.1, 0, 0.28, [
-          [0, "#0b6276"],
-          [1, "#18b8e0"],
+        fc.fillStyle = makeLin(fc, -0.06, 0.11, -0.14, 0.298, [
+          [0, "#129c58"],
+          [0.54, "#168ea4"],
+          [1, NAVY],
         ]);
         fc.fillRect(-0.4, 0, 0.7, 0.4);
         const pts: Pt[] = [];
-        for (let i = 0; i < 9; i++) pts.push([0.095 - i * 0.042, 0.268]);
-        drawFinRays(fc, [-0.05, 0.12], pts, rgbaHex("#04261c", 0.35), 0.0036);
-        fc.strokeStyle = "#125c88";
-        fc.lineWidth = 0.012;
+        for (let i = 0; i < 9; i++) pts.push([0.075 - i * 0.044, 0.275]);
+        drawFinRays(fc, [-0.06, 0.11], pts, rgbaHex(NAVY, 0.42), 0.0044);
+        fc.strokeStyle = NAVY;
+        fc.lineWidth = 0.015;
         fc.beginPath();
-        fc.moveTo(0.145, 0.178);
-        fc.bezierCurveTo(0.01, 0.278, -0.165, 0.285, -0.258, 0.185);
+        fc.moveTo(0.115, 0.205);
+        fc.bezierCurveTo(-0.04, 0.298, -0.23, 0.298, -0.31, 0.162);
         fc.stroke();
       },
       maxAnisotropy,
       true,
-      0.0012,
-      undefined,
-      (x, y) => smoothstep(evalTop(x) - 0.006, evalTop(x) + 0.018, y)
+      0
     ).mesh
   );
 
   const analShape = new THREE.Shape();
-  analShape.moveTo(-0.025, -0.172);
-  analShape.bezierCurveTo(-0.09, -0.272, -0.205, -0.268, -0.255, -0.172);
-  analShape.quadraticCurveTo(-0.245, -0.1, -0.232, -0.055);
+  analShape.moveTo(-0.025, -0.175);
+  analShape.bezierCurveTo(-0.1, -0.272, -0.225, -0.27, -0.285, -0.158);
+  analShape.quadraticCurveTo(-0.265, -0.095, -0.242, -0.056);
   analShape.closePath();
 
   bodyGroup.add(
@@ -3899,78 +4343,135 @@ function createParrot3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       0.0036,
       0.001,
       (fc) => {
-        fc.fillStyle = makeLin(fc, 0, -0.1, 0, -0.27, [
-          [0, "#0b6276"],
-          [1, "#18b8e0"],
+        fc.fillStyle = makeLin(fc, -0.12, -0.11, -0.15, -0.272, [
+          [0, "#129c58"],
+          [0.54, "#168ea4"],
+          [1, NAVY],
         ]);
         fc.fillRect(-0.4, -0.4, 0.5, 0.4);
         const pts: Pt[] = [];
-        for (let i = 0; i < 6; i++) pts.push([-0.06 - i * 0.036, -0.255]);
-        drawFinRays(fc, [-0.14, -0.11], pts, rgbaHex("#04261c", 0.35), 0.0036);
-        fc.strokeStyle = "#125c88";
-        fc.lineWidth = 0.012;
+        for (let i = 0; i < 6; i++) pts.push([-0.065 - i * 0.04, -0.252]);
+        drawFinRays(fc, [-0.14, -0.11], pts, rgbaHex(NAVY, 0.42), 0.0044);
+        fc.strokeStyle = NAVY;
+        fc.lineWidth = 0.015;
         fc.beginPath();
-        fc.moveTo(-0.025, -0.172);
-        fc.bezierCurveTo(-0.09, -0.272, -0.205, -0.268, -0.255, -0.172);
+        fc.moveTo(-0.025, -0.175);
+        fc.bezierCurveTo(-0.1, -0.272, -0.225, -0.27, -0.285, -0.158);
         fc.stroke();
       },
       maxAnisotropy,
       true,
-      0.0012,
-      undefined,
-      (x, y) => smoothstep(evalBot(x) + 0.006, evalBot(x) - 0.018, y)
+      0
     ).mesh
   );
 
   const pelvicFin = new THREE.Group();
   bodyGroup.add(pelvicFin);
 
+  // Broad Rounded Fan-Paddle Pectoral Fin angled outward via onCustomPose so it NEVER clips into the body (Image 2)
   const pecShape = new THREE.Shape();
-  pecShape.moveTo(0, 0.012);
-  pecShape.bezierCurveTo(-0.044, 0.052, -0.125, 0.028, -0.118, -0.018);
-  pecShape.bezierCurveTo(-0.1, -0.056, -0.03, -0.045, 0, -0.015);
+  pecShape.moveTo(0, 0.024);
+  pecShape.bezierCurveTo(-0.042, 0.072, -0.118, 0.062, -0.124, -0.006);
+  pecShape.bezierCurveTo(-0.126, -0.07, -0.046, -0.076, 0, -0.024);
   pecShape.closePath();
+  const pecX = 0.115;
+  const pecY = -0.046;
   const pecObj = makeSpineFinMesh(
     ctx,
     pecShape,
-    0.095,
-    -0.06,
-    0.003,
+    pecX,
+    pecY,
+    0.0034,
     0.0009,
     (fc, b) => {
       fc.fillStyle = makeLin(fc, b.maxX, 0, b.minX, 0, [
-        [0, "#18a8d8"],
-        [1, "#7ff2ff"],
+        [0, "#74e8a8"],
+        [0.52, "#2ea888"],
+        [1, "#10488a"],
       ]);
       fc.fillRect(-0.3, -0.2, 0.4, 0.4);
+      drawFinRays(
+        fc,
+        [-0.004, 0],
+        [
+          [-0.112, 0.036],
+          [-0.118, 0.012],
+          [-0.118, -0.012],
+          [-0.11, -0.038],
+        ],
+        rgbaHex("#0b3a64", 0.48),
+        0.0034
+      );
     },
     maxAnisotropy,
     false,
-    0.0011
+    0
   );
+  const pecZ =
+    surfaceZAt(evalTop, evalBotFull, (x) => evalZ(x, clamp((x - xTail) / (xSnout - xTail), 0, 1)), pecX, pecY, 0.22, 1) +
+    0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.095, -0.06, 0.094);
+  pecLeft.position.set(pecX, pecY, pecZ);
   pecLeft.add(pecObj.mesh);
+
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.095, -0.06, -0.094);
-  pecRight.add(pecObj.mesh.clone());
+  pecRight.position.set(pecX, pecY, -pecZ);
+  const pecMeshR = pecObj.mesh.clone();
+  pecRight.add(pecMeshR);
   bodyGroup.add(pecLeft, pecRight);
 
-  const parrotEz = surfaceZAt(evalTop, evalUnifiedBot, (x) => evalZ(x, (x - xTail) / (xSnout - xTail)), 0.228, 0.058);
+  // Calm, expressive Image-1 eye nestled cleanly in socket right beneath the jenong overhang + matching cyan upper eyelid fold!
+  const napEx = 0.224;
+  const napEy = 0.094;
+  const napEr = 0.032;
+  const parrotEz = surfaceZAt(
+    evalTop,
+    evalBotFull,
+    (x) => evalZ(x, clamp((x - xTail) / (xSnout - xTail), 0, 1)),
+    napEx,
+    napEy,
+    0.22,
+    0.96
+  );
   const { eyesNormal, eyesPupil, eyesHappy } = createEyePair(ctx, bodyGroup, {
-    ex: 0.228,
-    ey: 0.058,
+    ex: napEx,
+    ey: napEy,
     ez: parrotEz,
-    er: 0.042,
-    irisColor: pal.iris || "#143850",
-    rimColor: OL,
+    er: napEr,
+    sx: 0.88,
+    sy: 0.94,
+    yawRot: 0.28,
+    irisColor: pal.iris || "#0a2a3c",
+    rimColor: "#0a4e70",
   });
 
-  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.02, 0, "#5cf2ff", 0.05);
+  // Seamless turquoise-cyan upper eyelid fold matching the surrounding head tone (Image 1 calm hooded eye)
+  const lidGeo = track(new THREE.SphereGeometry(napEr * 1.07, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.38));
+  lidGeo.scale(0.9, 0.94, 0.36);
+  const lidMat = track(
+    new THREE.MeshPhysicalMaterial({
+      color: "#14a6ca",
+      emissive: "#14a6ca",
+      emissiveIntensity: 0.14,
+      roughness: 0.82,
+      clearcoat: 0.02,
+      envMapIntensity: 0.05,
+    })
+  );
+  for (let i = 0; i < eyesNormal.length; i++) {
+    const side = i === 0 ? 1 : -1;
+    const lid = new THREE.Mesh(lidGeo, lidMat);
+    lid.position.set(0, napEr * 0.1, side * napEr * 0.04);
+    lid.rotation.z = -0.18;
+    eyesNormal[i].add(lid);
+  }
+
+  const { biteRing, biteRingMat } = createBiteRing(ctx, bodyGroup, xSnout + 0.032, -0.006, "#5cf2ff", 0.056);
 
   return {
     speciesKey: sp.id,
     tailPivotX: xTail + 0.014,
+    skipDefaultFins: true,
     root,
     pitchGroup,
     yawGroup,
@@ -3989,6 +4490,24 @@ function createParrot3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     biteRing,
     biteRingMat,
     uniforms,
+    onCustomPose: (p, open) => {
+      const tightClamp = p.jaw < 0 ? clamp(-p.jaw, 0, 0.4) : 0;
+      upperJawGroup.rotation.z = open * 0.12 - tightClamp * 0.03;
+      lowerJawGroup.rotation.z = -open * 0.78 + tightClamp * 0.08;
+      const hasMouth = open > 0.08;
+      mouthInterior.visible = hasMouth;
+      if (hasMouth) {
+        mouthInterior.scale.set(0.82 + open * 0.2, 0.36 + open * 0.72, 0.78 + open * 0.14);
+      }
+      tongueMesh.visible = open > 0.1;
+      tongueMesh.position.y = -0.028 - hy + open * 0.004;
+
+      const finFlutter = p.wag2 * (p.sucking ? 1.55 : 1.0);
+      pecLeft.rotation.y = 0.34 + Math.sin(finFlutter) * 0.16;
+      pecLeft.rotation.z = -0.14 + Math.cos(finFlutter) * 0.1;
+      pecRight.rotation.y = -0.34 - Math.sin(finFlutter + 0.7) * 0.16;
+      pecRight.rotation.z = -0.14 + Math.cos(finFlutter + 0.7) * 0.1;
+    },
     dispose: () => {
       for (const d of ctx.disposables) d.dispose();
     },
@@ -4036,8 +4555,8 @@ function createButterfly3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
         [
           [0.272, 0.105],
           [0.305, 0.032],
-          [0.365, 0.006],
-          [ux3, -0.014],
+          [0.365, 0.008],
+          [ux3, -0.005],
         ],
       ],
       22
@@ -4061,8 +4580,8 @@ function createButterfly3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
         [
           [0.245, -0.118],
           [0.305, -0.068],
-          [0.375, -0.042],
-          [lx3, -0.026],
+          [0.375, -0.048],
+          [lx3, -0.038],
         ],
       ],
       22
@@ -4071,7 +4590,7 @@ function createButterfly3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const evalZ = (x: number, t: number) => {
     const base = 0.016 + 0.072 * Math.sin(Math.pow(clamp(t, 0, 1), 0.72) * Math.PI);
-    return x > 0.24 ? base * clamp(1 - (x - 0.24) / 0.22, 0.28, 1) : base;
+    return x > 0.24 ? base * clamp(1 - (x - 0.24) / 0.22, 0.38, 1) : base;
   };
 
   const { mapUV, beginCanvas2D } = createWorldMapper(-0.27, 0.47, -0.3, 0.3, 512);
@@ -4150,7 +4669,7 @@ function createButterfly3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
   const evalBot = (x: number) => interpCurveY(botPts, x);
   const evalUpperPalate = (x: number) => {
     const t = clamp((x - (hx - 0.02)) / (ux3 - (hx - 0.02)), 0, 1);
-    return hy + 0.01 * t;
+    return hy + 0.003 * t;
   };
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
@@ -4200,7 +4719,7 @@ function createButterfly3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       vSteps: 20,
       evalTopY: (x) => {
         const t = clamp((x - (hx - 0.02)) / (lx3 - (hx - 0.02)), 0, 1);
-        return hy - 0.002 * t;
+        return hy + 0.002 * t;
       },
       evalBotY: evalBot,
       evalHalfZ: evalZ,
@@ -4366,11 +4885,21 @@ function createButterfly3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     { transparent: true, opacity: 0.85 }
   );
   pecObj.mesh.rotation.z = 0.45;
+  const pecZButterfly =
+    surfaceZAt(
+      evalTop,
+      evalUnifiedBot,
+      (x) => evalZ(x, clamp((x - xTail) / (ux3 - xTail), 0, 1)),
+      0.135,
+      -0.072,
+      0.22,
+      1.0
+    ) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.135, -0.072, 0.072);
+  pecLeft.position.set(0.135, -0.072, pecZButterfly);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.135, -0.072, -0.072);
+  pecRight.position.set(0.135, -0.072, -pecZButterfly);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
@@ -4474,9 +5003,9 @@ function createSnapper3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
         ],
         [
           [0.24, -0.095],
-          [0.305, -0.086],
-          [0.352, -0.068],
-          [lx3, -0.038],
+          [0.305, -0.088],
+          [0.355, -0.074],
+          [lx3, -0.060],
         ],
       ],
       22
@@ -4540,10 +5069,7 @@ function createSnapper3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
 
   const evalTop = (x: number) => interpCurveY(topPts, x);
   const evalBot = (x: number) => interpCurveY(botPts, x);
-  const evalUpperPalate = (x: number) => {
-    const t = clamp((x - (hx - 0.02)) / (ux3 - (hx - 0.02)), 0, 1);
-    return hy + 0.014 * t;
-  };
+  const evalUpperPalate = () => hy;
   const evalUnifiedBot = blendBotToPalate(evalBot, evalUpperPalate, hx);
   const evalMidY = (x: number) => (evalTop(x) + evalUnifiedBot(x)) * 0.5;
   const snapperMask = bodySpineOutlineMask(
@@ -4592,7 +5118,7 @@ function createSnapper3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
       vSteps: 20,
       evalTopY: (x) => {
         const t = clamp((x - (hx - 0.02)) / (lx3 - (hx - 0.02)), 0, 1);
-        return hy + 0.002 * t;
+        return hy - 0.002 * t;
       },
       evalBotY: evalBot,
       evalHalfZ: evalZ,
@@ -4754,11 +5280,21 @@ function createSnapper3DRig(sp: Species, maxAnisotropy: number): Fish3DRig {
     0.0011
   );
   pecObj.mesh.rotation.z = 0.38;
+  const pecZSnapper =
+    surfaceZAt(
+      evalTop,
+      evalUnifiedBot,
+      (x) => evalZ(x, clamp((x - xTail) / (ux3 - xTail), 0, 1)),
+      0.155,
+      -0.048,
+      0.22,
+      1.0
+    ) + 0.006;
   const pecLeft = new THREE.Group();
-  pecLeft.position.set(0.155, -0.048, 0.082);
+  pecLeft.position.set(0.155, -0.048, pecZSnapper);
   pecLeft.add(pecObj.mesh);
   const pecRight = new THREE.Group();
-  pecRight.position.set(0.155, -0.048, -0.082);
+  pecRight.position.set(0.155, -0.048, -pecZSnapper);
   pecRight.add(pecObj.mesh.clone());
   bodyGroup.add(pecLeft, pecRight);
 
